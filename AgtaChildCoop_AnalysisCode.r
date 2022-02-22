@@ -1,4 +1,4 @@
-## Analysis code for Daniel Major-Smith et al. "Cooperation and Partner Choice Among Agta Hunter-Gatherers: An Evolutionary Developmental Perspective"
+## Analysis code for Daniel Major-Smith et al. "Cooperation and Partner Choice Among Agta Hunter-Gatherer Children: An Evolutionary Developmental Perspective"
 
 ## Author: Daniel Major-Smith
 ## R version 4.0.4
@@ -101,7 +101,7 @@ hist(data$age)
 
 (fig1 <- ggplot(data = data, aes(x = age)) +
   geom_histogram(binwidth = 1, colour = "black", fill = "gray70") +
-  ylab("Number of observations") +
+  ylab("Number of children") +
   xlab("Age (years)") +
   theme_bw() +
   theme(axis.title.x = element_text(size = 18),
@@ -782,7 +782,7 @@ data$fit_resp <- predict(full.numRec)
                     aes(x = age, y = fit_resp)) +
     geom_smooth(method = "loess", colour = "black") +
     geom_point() +
-    ylab("Predicted number of unique respondents") +
+    ylab("Predicted number of unique recipients") +
     xlab("Child age (years)") +
     theme_bw() +
     theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
