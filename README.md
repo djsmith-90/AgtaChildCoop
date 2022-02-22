@@ -1,4 +1,4 @@
-## Git repository data and analysis code supporting the paper "Cooperation and Partner Choice Among Agta Hunter-Gatherers: An Evolutionary Developmental Perspective"
+## Git repository data and analysis code supporting the paper "Cooperation and Partner Choice Among Agta Hunter-Gatherer Children: An Evolutionary Developmental Perspective"
 
 This repository contains three CSV data files and one R analysis code document:
  - "AgtaChildCoop_AmountGiven.csv" - Data for levels of children's cooperation analyses
