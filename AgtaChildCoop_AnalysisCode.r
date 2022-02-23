@@ -99,7 +99,7 @@ hist(data$age)
 
 ## Make a decent-looking histogram for age
 
-(fig1 <- ggplot(data = data, aes(x = age)) +
+(figS1 <- ggplot(data = data, aes(x = age)) +
   geom_histogram(binwidth = 1, colour = "black", fill = "gray70") +
   ylab("Number of children") +
   xlab("Age (years)") +
@@ -115,8 +115,8 @@ hist(data$age)
              color="black", linetype="dashed", size=1))
 
 # Now save this plot
-pdf("../Results/Fig1_AgeHist.pdf", width = 12, height = 8)
-fig1
+pdf("../Results/FigS1_AgeHist.pdf", width = 12, height = 8)
+figS1
 dev.off()
 
 # Summary stats of age by camp (for table S1)
@@ -187,7 +187,7 @@ head(data)
 
 
 #### Create directed acyclic graph (DAG) encoding the hypothesised causal structure of the data, with 'child levels of cooperation' as the outcome
-fig2 <- dagitty('dag {
+figS2 <- dagitty('dag {
                    childCoop [pos = "3,3"]
                    age [pos = "0.5,3"]
                    sex [pos = "1,2.5"]
@@ -205,11 +205,11 @@ fig2 <- dagitty('dag {
                    resourceAvailability -> adultCoop
                    storytelling -> adultCoop
 }')
-plot(fig2)
+plot(figS2)
 
 # Now save this plot
-pdf("../Results/Fig2_DAG.pdf", width = 7, height = 5)
-plot(fig2)
+pdf("../Results/FigS2_DAG.pdf", width = 7, height = 5)
+plot(figS2)
 dev.off()
 
 
@@ -237,7 +237,7 @@ as.data.frame(lme4::VarCorr(null.ml))$vcov[1] /
     (as.data.frame(lme4::VarCorr(null.ml))$vcov[1] + as.data.frame(lme4::VarCorr(null.ml))$vcov[2])
 
 # Plot this camp-level variation
-(fig3 <- ggplot(data = data,
+(fig1 <- ggplot(data = data,
        aes(x = camp, y = perGiven)) +
   geom_boxplot(fill='#A4A4A4', color="black") +
   ylab("Amount shared") +
@@ -255,8 +255,8 @@ as.data.frame(lme4::VarCorr(null.ml))$vcov[1] /
              color="black", linetype="dashed", size=1))
 
 # Now save this plot
-pdf("../Results/Fig3_CampVariation.pdf", width = 12, height = 8)
-fig3
+pdf("../Results/Fig1_CampVariation.pdf", width = 12, height = 8)
+fig1
 dev.off()
 
 # Get summary stats of camp-level variation
@@ -347,7 +347,7 @@ write_csv(table2, "../Results/table2.csv", quote = FALSE)
 
 
 ## Check some model assumptions (of normality) - Residuals from the full model look relatively normal - And save these images
-pdf("../Results/FigS1_Residuals_FullCoopModel.pdf", width = 12, height = 5)
+pdf("../Results/FigS3_Residuals_FullCoopModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
@@ -364,7 +364,7 @@ par(mfrow = c(1, 1))
 
 
 # Now test for heteroskedascity - It's a bit odd, but I don't think it's '*too* bad...(mainly looks weird because the range of values is only between 0 and 5)
-pdf("../Results/FigS2_Heteroskedasticity_FullCoopModel.pdf", width = 8, height = 6)
+pdf("../Results/FigS4_Heteroskedasticity_FullCoopModel.pdf", width = 8, height = 6)
 
 plot(residuals(full.give) ~ fitted.values(full.give), xlab = "Fitted values", ylab = "Residuals")
 
@@ -382,7 +382,7 @@ campData <- data %>%
 head(campData)
 
 set.seed(1234)
-(fig4 <- ggplot(data = NULL) +
+(fig2 <- ggplot(data = NULL) +
     geom_smooth(data = campData, aes(x = adultCoop, y = childCoop),
                 method = "lm", colour = "black", fill = "gray80") +
     ylab("Number of gifts shared by children") +
@@ -399,8 +399,8 @@ set.seed(1234)
     geom_point(data = campData, aes(x = adultCoop, y = childCoop, size = size), shape = 18) +
     scale_x_continuous(breaks=seq(0,70,10)))
 
-pdf("../Results/Fig4_ChildAdultCoop.pdf", width = 12, height = 8)
-fig4
+pdf("../Results/Fig2_ChildAdultCoop.pdf", width = 12, height = 8)
+fig2
 dev.off()
 
 
@@ -750,7 +750,7 @@ confint(full.numRec)
 
 
 # First check some model assumptions (of normality) - Residuals from the global model look relatively normal - And save these images
-pdf("../Results/FigS3_Residuals_FullNumRecipModel.pdf", width = 12, height = 5)
+pdf("../Results/FigS6_Residuals_FullNumRecipModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
@@ -767,7 +767,7 @@ par(mfrow = c(1, 1))
 
 
 # Now test for heteroskedascity - It's a bit odd, but I don't think it's 'too' bad...(mainly looks weird because the values are only 0 to 5)
-pdf("../Results/FigS4_Heteroskedasticity_FullNumRecipModel.pdf", width = 8, height = 6)
+pdf("../Results/FigS7_Heteroskedasticity_FullNumRecipModel.pdf", width = 8, height = 6)
 
 plot(residuals(full.numRec) ~ fitted.values(full.numRec), xlab = "Fitted values", ylab = "Residuals")
 
@@ -795,7 +795,7 @@ data$fit_resp <- predict(full.numRec)
 
 
 # Arrange amount shared and number of recipients fitted value plots together and save as pdf file
-pdf("../Results/Fig5_AgeCoop.pdf", width = 8, height = 12)
+pdf("../Results/FigS5_AgeCoop.pdf", width = 8, height = 12)
 
 grid.arrange(age_fit,ageResp_fit, ncol = 1)
 
@@ -988,7 +988,7 @@ confint(camp.rel)
     summarise(n = length(Cond), mean = mean(Rel), SD = sd(Rel), 
               min = min(Rel), max = max(Rel), median = median(Rel)))
 
-(histS5 <- ggplot(data = relate,
+(histS8 <- ggplot(data = relate,
                   aes(x = Rel, colour = Cond)) +
     geom_histogram(binwidth = 0.01, fill = "white", position = "identity", alpha = 0.25, size = 2) +
     ylab("Number of observations") +
@@ -1007,9 +1007,9 @@ confint(camp.rel)
     geom_vline(data = rel.table, aes(xintercept=mean, colour = Cond), linetype="dashed", size=1))
 
 # Save this plot
-pdf("../Results/FigS5_CampRel_ByGroup.pdf", width = 8, height = 6)
+pdf("../Results/FigS8_CampRel_ByGroup.pdf", width = 8, height = 6)
 
-histS5
+histS8
 
 dev.off()
 
@@ -1017,7 +1017,7 @@ dev.off()
 # First check some model assumptions (of normality) - The residuals are really dodgy, and no transformation 
 # would fix this (this is because the raw data are bimodal - Relatedness to recipients has a major mode 
 # at 0.5, and a small peak at around 0)
-pdf("../Results/FigS6_Residuals_CampRelModel.pdf", width = 12, height = 5)
+pdf("../Results/FigS9_Residuals_CampRelModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
@@ -1035,7 +1035,7 @@ par(mfrow = c(1, 1))
 
 # Now test for heteroskedascity - It's rather odd, but I don't think it's *too* bad...(looks
 # weird because the raw data is very non-normal)
-pdf("../Results/FigS7_Heteroskedasticity_CampRelModel.pdf", width = 8, height = 6)
+pdf("../Results/FigS10_Heteroskedasticity_CampRelModel.pdf", width = 8, height = 6)
 
 plot(residuals(camp.rel) ~ fitted.values(camp.rel), xlab = "Fitted values", ylab = "Residuals")
 
@@ -1080,7 +1080,7 @@ confint(rel.agebysex)
 
 # Normality - The residuals are really dodgy, and I doubt that transformations will help given the
 # really weird distribution of relatedness
-pdf("../Results/FigS8_Residuals_RelAgeSexModel.pdf", width = 12, height = 5)
+pdf("../Results/FigS11_Residuals_RelAgeSexModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
@@ -1097,7 +1097,7 @@ par(mfrow = c(1, 1))
 
 
 # Now test for heteroskedascity - It ain't too great...
-pdf("../Results/FigS9_Heteroskedasticity_RelAgeSexModel.pdf", width = 8, height = 6)
+pdf("../Results/FigS12_Heteroskedasticity_RelAgeSexModel.pdf", width = 8, height = 6)
 
 plot(residuals(rel.agesex) ~ fitted.values(rel.agesex), xlab = "Fitted values", ylab = "Residuals")
 
@@ -1125,7 +1125,7 @@ df <- rel_age %>%
 df
 
 # Now make plot
-(fig6 <- ggplot(data=df, aes(x=age_cats, y=freq, fill=kin_cats)) +
+(fig3 <- ggplot(data=df, aes(x=age_cats, y=freq, fill=kin_cats)) +
     geom_bar(stat="identity", position=position_dodge()) +
     geom_text(aes(label=n), vjust=1.6, color="white",
             position = position_dodge(0.9), size=5) +
@@ -1144,9 +1144,9 @@ df
           legend.title = element_text(size=16)))
 
 # Save this plot
-pdf("../Results/Fig6_RelByAge.pdf", width = 8, height = 6)
+pdf("../Results/Fig3_RelByAge.pdf", width = 8, height = 6)
 
-fig6
+fig3
 
 dev.off()
 
@@ -1198,7 +1198,7 @@ summary(rel2.model)
 
 
 # Tests of assumptions
-pdf("../Results/FigS10_AssumptionPlots_SingleLevelRelAgeSexModel_.pdf", width = 12, height = 5)
+pdf("../Results/FigS13_AssumptionPlots_SingleLevelRelAgeSexModel_.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,3))
 
@@ -1341,7 +1341,7 @@ summary(recip$fitted_age)
     scale_x_continuous(breaks = seq(3, 18, 3)))
 
 
-pdf("../Results/FigS11_EgoAndRecAge.pdf", width = 10, height = 8)
+pdf("../Results/FigS14_EgoAndRecAge.pdf", width = 10, height = 8)
 age_fit
 dev.off()
 
@@ -1361,7 +1361,7 @@ set.seed(1234)
     scale_y_continuous(breaks = seq(2, 13, 2), limits = c(1.5, 13.5)) +
     scale_x_continuous(breaks = seq(0, 0.5, 0.1)))
 
-pdf("../Results/FigS12_EgoAgeAndRel.pdf", width = 10, height = 8)
+pdf("../Results/FigS15_EgoAgeAndRel.pdf", width = 10, height = 8)
 rel_fit
 dev.off()
 
@@ -1458,7 +1458,7 @@ plot(residuals(ageDiff.full) ~ fitted.values(ageDiff.full), xlab = "Fitted value
 
 
 ## Put these assumption plots for alter age and age diff into one 3x2 plot
-pdf("../Results/FigS13_AssumptionPlots_AlterAge_AgeDiff.pdf", width = 12, height = 8)
+pdf("../Results/FigS16_AssumptionPlots_AlterAge_AgeDiff.pdf", width = 12, height = 8)
 
 par(mfrow = c(2,3))
 
