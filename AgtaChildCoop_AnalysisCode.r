@@ -28,7 +28,7 @@ library(dagitty)
 
 
 # Set working directory
-setwd("C:\\Users\\ds16565\\OneDrive - University of Bristol\\MyFiles-Migrated\\Documents\\KidCoopPaper\\Analysis\\CurrentScriptAndData")
+setwd("...")
 
 
 #########################################################
@@ -127,28 +127,6 @@ tableS1 <- data %>%
 
 tableS1
 
-
-## Recommended by an early reader of this paper to run a simple model between average child age and camp size, else if larger camps had older/younger children this may confound any relationships in the 'partner choice' analyses. But there's no relationship, so all seems okay (and in the partner choice models below I include camp as a random effect, so I think it should all be fine)
-tableS1$size[tableS1$camp == "P1"] <- 14
-tableS1$size[tableS1$camp == "P2"] <- 93
-tableS1$size[tableS1$camp == "P3"] <- 22
-tableS1$size[tableS1$camp == "P4"] <- 37
-tableS1$size[tableS1$camp == "P5"] <- 37
-tableS1$size[tableS1$camp == "P6"] <- 33
-tableS1$size[tableS1$camp == "P7"] <- 59
-tableS1$size[tableS1$camp == "P8"] <- 21
-tableS1$size[tableS1$camp == "P9"] <- 19
-tableS1$size[tableS1$camp == "P10"] <- 37
-tableS1$size[tableS1$camp == "P11"] <- 18
-tableS1$size[tableS1$camp == "M1"] <- 23
-tableS1$size[tableS1$camp == "M2"] <- 18
-tableS1$size[tableS1$camp == "M3"] <- 18
-
-plot(tableS1$size, tableS1$mean)
-summary(lm(size ~ mean, data = tableS1))
-
-tableS1 <- tableS1 %>%
-  select(-size)
 
 # Also want to add a 'total' column to the bottom
 total <- tribble(
