@@ -29,6 +29,7 @@ library(dagitty)
 
 # Set working directory
 setwd("...")
+setwd("C:\\Users\\ds16565\\OneDrive - University of Bristol\\MyFiles-Migrated\\Documents\\KidCoopPaper\\Analysis\\CurrentScriptAndData")
 
 
 #########################################################
@@ -122,8 +123,8 @@ dev.off()
 # Summary stats of age by camp (for table S1)
 tableS1 <- data %>%
   group_by(camp) %>%
-  summarise(n = length(age), mean = round(mean(age), 2), sd = round(sd(age), 2), 
-            min = min(age), max = max(age))
+  summarise(n = length(age), mean = round(mean(age), 1), sd = round(sd(age), 1), 
+            min = round(min(age), 1), max = round(max(age), 1))
 
 tableS1
 
@@ -131,7 +132,8 @@ tableS1
 # Also want to add a 'total' column to the bottom
 total <- tribble(
   ~camp, ~n, ~mean, ~sd, ~min, ~max,
-  "Total", length(data$age), round(mean(data$age), 2), round(sd(data$age), 2), min(data$age), max(data$age)
+  "Total", length(data$age), round(mean(data$age), 1), round(sd(data$age), 1), 
+  round(min(data$age), 1), round(max(data$age), 1)
 )
 
 total
@@ -402,6 +404,69 @@ summary(data$fit)
 
 
 
+### Suggested by a reviewer to re-run analyses removing high/low ages (3, or 15 to 18), as well as small camps (with <5 children in them). Personally disagree with this, as generally bad form to throw away data, but will run analyses and report in response to reviewers (but not final paper) that results do not materially change.
+data_rerun <- data %>%
+  filter(camp != "P1" & camp != "M3") %>%
+  filter(age >= 4 & age < 15)
+
+summary(data_rerun)
+
+# Run a separate model for each predictor
+age.give_rerun <- lmer(perGiven ~ age + (1|camp), REML=FALSE, data = data_rerun)
+summary(age.give_rerun)
+
+sex.give_rerun <- lmer(perGiven ~ sex + (1|camp), REML=FALSE, data = data_rerun)
+summary(sex.give_rerun)
+
+rel.give_rerun <- lmer(perGiven ~ rel + (1|camp), REML=FALSE, data = data_rerun)
+summary(rel.give_rerun)
+
+adult.give_rerun <- lmer(perGiven ~ adult + (1|camp), REML=FALSE, data = data_rerun)
+summary(adult.give_rerun)
+
+# Now run a combined model which includes all predictors (based on our DAG, as we assume that these variables are relatively independent, the results of full model should be similar to individual models - and they are)
+full.give_rerun <- lmer(perGiven ~ age + sex + rel + adult + (1|camp), REML=FALSE, data = data_rerun)
+summary(full.give_rerun)
+
+# Save these results in a table and export to CSV
+table2_rerun <- as.data.frame(cbind(c(rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)),
+                              c(rep(c("Univariable", "Multivariable"), each = 4)),
+                              c(rep(c("Individual", "Individual", "Individual", "Camp"), 2)),
+                              c(coef(summary(age.give_rerun))[2,1], coef(summary(sex.give_rerun))[2,1],
+                                coef(summary(rel.give_rerun))[2,1], coef(summary(adult.give_rerun))[2,1],
+                                coef(summary(full.give_rerun))[2:5,1]),
+                              c(coef(summary(age.give_rerun))[2,2], coef(summary(sex.give_rerun))[2,2],
+                                coef(summary(rel.give_rerun))[2,2], coef(summary(adult.give_rerun))[2,2],
+                                coef(summary(full.give_rerun))[2:5,2]),
+                              c(confint(age.give_rerun)[4,1], confint(sex.give_rerun)[4,1], 
+                                confint(rel.give_rerun)[4,1], confint(adult.give_rerun)[4,1], 
+                                confint(full.give_rerun)[4:7,1]), 
+                              c(confint(age.give_rerun)[4,2], confint(sex.give_rerun)[4,2], 
+                                confint(rel.give_rerun)[4,2], confint(adult.give_rerun)[4,2], 
+                                confint(full.give_rerun)[4:7,2]),
+                              c(coef(summary(age.give_rerun))[2,5], coef(summary(sex.give_rerun))[2,5],
+                                coef(summary(rel.give_rerun))[2,5], coef(summary(adult.give_rerun))[2,5],
+                                coef(summary(full.give_rerun))[2:5,5])))
+colnames(table2_rerun) <- c("Variable", "Model", "Level", "Coefficient", "SE", "LCI", "UCI", "p")
+
+# Convert estimates to numeric and round
+table2_rerun <- table2_rerun %>%
+  mutate(Coefficient = as.numeric(Coefficient)) %>%
+  mutate(Coefficient = round(Coefficient, 3)) %>%
+  mutate(SE = as.numeric(SE)) %>%
+  mutate(SE = round(SE, 3)) %>%
+  mutate(LCI = as.numeric(LCI)) %>%
+  mutate(LCI = round(LCI, 3)) %>%
+  mutate(UCI = as.numeric(UCI)) %>%
+  mutate(UCI = round(UCI, 3)) %>%
+  mutate(p = as.numeric(p)) %>%
+  mutate(p = round(p, 3))
+
+table2_rerun
+
+write_csv(table2_rerun, "../Results/table2_rerun.csv", quote = FALSE)
+
+
 ## As a sensitivity analysis, will run the same models, but using poisson and ordinal regression/cumulative link models, as the number of gifts given (0 to 5) isn't really continuous - CLMs predict the odds (or log-odds) of being in a higher outcome category (amount shared), for a one-unit increase in the predictor variable. This is quite similar to poisson regression, but as poisson regressions require count data there's no (theoretical) upper value. But in our example there is an upper value (5) in which case an ordinal model may also be appropriate. Also, the distribution of our data is skewed, as there is an over-abundance of '0's for a poisson distribution. However, if all models give qualitatively similar results, this bolsters our confidence in our conclusions, even if some model assumptions are violated.
 
 ## Start with poisson distribution, because it (potentially) meets model assumptions better, which is used for count data (which is what we have here)
@@ -554,6 +619,324 @@ tableS2
 
 # Save this table
 write_csv(tableS2, file = "../Results/tableS2.csv", quote = FALSE)
+
+
+
+### Reviewer also suggested running a logistic model with each keep vs share decision as the outcome. Have included these results in the response to reviewer document, but not in the main text (as the results are comparable, and there are already enough sensitivity analyses in the main text)
+
+# Replicate data so is repeated 5 times
+data_binary <- data %>%
+  bind_rows(replicate(4, data, simplify = FALSE)) %>%
+  arrange(id) %>%
+  group_by(id) %>%
+  mutate(trial = row_number()) %>%
+  ungroup(id)
+
+# Create a new variable saying whether a resource was shared or not, based on the number in 'perGiven' (as we're not interested in the order in which gifts were shared, this should not matter)
+data_binary <- data_binary %>%
+  mutate(shared = ifelse(trial <= perGiven, 1, 0))
+
+summary(data_binary)
+head(data_binary, n = 20L)
+
+
+## Now run a multi-level logistic model with both id and camp and random-effects
+
+# Fit the individual and full models again
+age.give.log <- glmer(shared ~ age + (1|id) + (1|camp), family = "binomial", data = data_binary)
+summary(age.give.log)
+
+sex.give.log <- glmer(shared ~ sex + (1|id) + (1|camp), family = "binomial", data = data_binary)
+summary(sex.give.log)
+
+rel.give.log <- glmer(shared ~ rel + (1|id) + (1|camp), family = "binomial", data = data_binary)
+summary(rel.give.log)
+
+adult.give.log <- glmer(shared ~ adult + (1|id) + (1|camp), family = "binomial", data = data_binary)
+summary(adult.give.log)
+
+# Now run a combined model which includes all predictors (some convergence warnings, but results look sensible and comparable to linear, ordinal and poisson results)
+full.give.log <- glmer(shared ~ age + sex + rel + adult + (1|id) + (1|camp), family = "binomial", data = data_binary)
+summary(full.give.log)
+
+
+## Make a table to save all these results to
+model <- rep(c("Separate", "Full"), each = 4)
+var <- rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)
+
+tableS2_log <- as.data.frame(cbind(model, var))
+tableS2_log
+
+# Combine results together
+tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Age"] <- round(exp(coef(summary(age.give.log))[2, 1]), 3)
+tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.log)[4, 1]), 3)
+tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.log)[4, 2]), 3)
+tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Age"] <- round(coef(summary(age.give.log))[2, 4], 3)
+
+tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Sex"] <- round(exp(coef(summary(sex.give.log))[2, 1]), 3)
+tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.log)[4, 1]), 3)
+tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.log)[4, 2]), 3)
+tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.give.log))[2, 4], 3)
+
+tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(exp(coef(summary(rel.give.log))[2, 1]), 3)
+tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.log)[4, 1]), 3)
+tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.log)[4, 2]), 3)
+tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.give.log))[2, 4], 3)
+
+tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(exp(coef(summary(adult.give.log))[2, 1]), 3)
+tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.log)[4, 1]), 3)
+tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.log)[4, 2]), 3)
+tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.give.log))[2, 4], 3)
+
+tableS2_log$log_coef[tableS2_log$model == "Full"] <- round(exp(coef(summary(full.give.log))[2:5, 1]), 3)
+tableS2_log$log_lci[tableS2_log$model == "Full"] <- round(exp(confint(full.give.log)[4:7, 1]), 3)
+tableS2_log$log_uci[tableS2_log$model == "Full"] <- round(exp(confint(full.give.log)[4:7, 2]), 3)
+tableS2_log$log_p[tableS2_log$model == "Full"] <- round(coef(summary(full.give.log))[2:5, 4], 3)
+
+tableS2_log
+
+# Save this table
+write_csv(tableS2_log, file = "../Results/tableS2_log.csv", quote = FALSE)
+
+
+
+### Interaction test for adult coop by age (as can't use random-slopes/random-effects) - E.g., to see whether there's an association between age and cooperation in camps where adults were more cooperative, but not if adults were less cooperative.
+
+# Linear model
+full.give_int <- lmer(perGiven ~ age + sex + rel + adult + age:adult + (1|camp), REML=FALSE, data = data)
+summary(full.give_int)
+
+# Poisson model
+full.give.p_int <- glmer(perGiven ~ age + sex + rel + adult + age:adult + (1|camp), family = "poisson", data = data)
+summary(full.give.p_int)
+
+# Ordinal model
+full.give.o_int <- clmm(perGiven_ord ~ age + sex + rel + adult + age:adult + (1|camp), data = data)
+summary(full.give.o_int)
+
+
+## Some convergence issues for the poisson and ordinal models, so will convert age and adult cooperation to z-scores (which seems to resolve these problems)
+data <- data %>%
+  mutate(age_z = (age - mean(age)) / sd(age))
+
+(data_camp <- data %>%
+    group_by(camp) %>%
+    summarise(mean_adult = mean(adult)))
+
+data <- data %>%
+  mutate(adult_z = (adult - mean(data_camp$mean_adult)) / sd(data_camp$mean_adult))
+
+summary(data)
+
+# Linear model
+full.give_int_z <- lmer(perGiven ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), REML=FALSE, data = data)
+summary(full.give_int_z)
+confint(full.give_int_z)
+
+# Poisson model
+full.give.p_int_z <- glmer(perGiven ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), family = "poisson", data = data)
+summary(full.give.p_int_z)
+exp(coef(summary(full.give.p_int_z)))
+exp(confint(full.give.p_int_z))
+
+# Ordinal model
+full.give.o_int_z <- clmm(perGiven_ord ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), data = data)
+summary(full.give.o_int_z)
+exp(coef(summary(full.give.o_int_z)))
+exp(confint(full.give.o_int_z))
+
+
+## Formal likelihood ratio tests of inclusion of interaction term
+anova(full.give, full.give_int_z)
+anova(full.give.p, full.give.p_int_z)
+anova(full.give.o, full.give.o_int_z)
+
+
+### Further suggestion by reviewer for taking variation in adult levels of cooperation into consideration.
+
+## Our approach is as follows:
+  # 1.	Sample from a normal distribution using the mean and standard error of adult cooperation from each camp, and use this as the average adult level of cooperation for said camp.
+  # 2.	Run the models (both univariable and multivariable), and store the parameter estimates.
+  # 3.	Iterate this process 1,000 times, sampling different adult levels of cooperation for each camp from the prior distribution each time.
+  # 4.	Present the median and 95% credible intervals of these results.
+
+
+## Set seed and embed script in a loop 1,000 times, run univariable and multivariable models for adult cooperation, and store estimates in a table.
+set.seed(5678)
+iter <- 1000
+
+# Data frame to collect parameters of interest
+res <- as.data.frame(array(dim = c(iter, 9)))
+colnames(res) <- c("iteration", "uni_adult_coef", "uni_adult_se", "uni_adult_lci", "uni_adult_uci",
+                   "multi_adult_coef", "multi_adult_se", "multi_adult_lci", "multi_adult_uci")
+#head(res)
+
+# Loop over each iteration (takes approx half an hour on a standard laptop for 1,000 iterations)
+for (i in 1:iter) {
+  
+  # Print interation
+  print(paste("Processing iteration", i))
+  
+  # Create the dataset and add adult cooperation value from prior distribution
+  data_temp <- data
+  data_temp$adult_samp <- NA
+  data_temp$adult_samp[data_temp$camp == "P1"] <- rnorm(n = 1, mean = 59.2, sd = 3.73)
+  data_temp$adult_samp[data_temp$camp == "P2"] <- rnorm(n = 1, mean = 31.4, sd = 3.61)
+  data_temp$adult_samp[data_temp$camp == "P3"] <- rnorm(n = 1, mean = 52.8, sd = 3.47)
+  data_temp$adult_samp[data_temp$camp == "P4"] <- rnorm(n = 1, mean = 56.9, sd = 7.34)
+  data_temp$adult_samp[data_temp$camp == "P5"] <- rnorm(n = 1, mean = 38.5, sd = 6.44)
+  data_temp$adult_samp[data_temp$camp == "P6"] <- rnorm(n = 1, mean = 21.7, sd = 5.19)
+  data_temp$adult_samp[data_temp$camp == "P7"] <- rnorm(n = 1, mean = 28.2, sd = 4.28)
+  data_temp$adult_samp[data_temp$camp == "P8"] <- rnorm(n = 1, mean = 6.67, sd = 6.67)
+  data_temp$adult_samp[data_temp$camp == "P9"] <- rnorm(n = 1, mean = 0, sd = 0)
+  data_temp$adult_samp[data_temp$camp == "P10"] <- rnorm(n = 1, mean = 30.4, sd = 6.61)
+  data_temp$adult_samp[data_temp$camp == "P11"] <- rnorm(n = 1, mean = 59, sd = 5.47)
+  data_temp$adult_samp[data_temp$camp == "M1"] <- rnorm(n = 1, mean = 69.3, sd = 4.52)
+  data_temp$adult_samp[data_temp$camp == "M2"] <- rnorm(n = 1, mean = 49.3, sd = 7.81)
+  data_temp$adult_samp[data_temp$camp == "M3"] <- rnorm(n = 1, mean = 60.7, sd = 9.64)
+
+  # Code any values < 0 as 0, and > 100 as 100 (as these values are impossible)
+  data_temp$adult_samp[data_temp$adult_samp < 0] <- 0
+  data_temp$adult_samp[data_temp$adult_samp > 100] <- 100
+  
+  # Run the univariable and multivariable models and store estimates
+  adult.give_samp <- lmer(perGiven ~ adult_samp + (1|camp), REML=FALSE, data = data_temp)
+  #summary(adult.give_samp)
+  
+  full.give_samp <- lmer(perGiven ~ age + sex + rel + adult_samp + (1|camp), REML=FALSE, data = data_temp)
+  #summary(full.give_samp)
+  
+  # Store these results
+  res[i, "iteration"] <- i
+  res[i, "uni_adult_coef"] <- coef(summary(adult.give_samp))[2,1]
+  res[i, "uni_adult_se"] <- coef(summary(adult.give_samp))[2,2]
+  res[i, "uni_adult_lci"] <- confint(adult.give_samp)[4,1]
+  res[i, "uni_adult_uci"] <- confint(adult.give_samp)[4,2] 
+  res[i, "multi_adult_coef"] <- coef(summary(full.give_samp))[5,1]
+  res[i, "multi_adult_se"] <- coef(summary(full.give_samp))[5,2]
+  res[i, "multi_adult_lci"] <- confint(full.give_samp)[7,1] 
+  res[i, "multi_adult_uci"] <- confint(full.give_samp)[7,2] 
+  
+}
+
+res
+
+# Save these results
+write_csv(res, file = "../Results/amountShared_adultVariation.csv", quote = FALSE)
+
+
+## Analyse iterations by taking median and 95% credible intervals as measures of effect (and make a nice histogram of these iterations)
+
+## Univariable analysis
+
+# Coefficient results
+median(res$uni_adult_coef)
+quantile(res$uni_adult_coef, c(0.025, 0.5, 0.975))
+
+# Lower CI results
+median(res$uni_adult_lci)
+quantile(res$uni_adult_lci, c(0.025, 0.5, 0.975))
+
+# Upper CI results
+median(res$uni_adult_uci)
+quantile(res$uni_adult_uci, c(0.025, 0.5, 0.975))
+
+
+# Plot main coefficient results
+med <- quantile(res$uni_adult_coef, 0.5)
+lci <- quantile(res$uni_adult_coef, 0.025)
+uci <- quantile(res$uni_adult_coef, 0.975)
+
+hist(res$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.04), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/amountShared_univarAdultCoop.pdf", height = 6, width = 8)
+hist(res$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.04), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
+
+# Plot lower CI results
+med <- quantile(res$uni_adult_lci, 0.5)
+lci <- quantile(res$uni_adult_lci, 0.025)
+uci <- quantile(res$uni_adult_lci, 0.975)
+
+hist(res$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/amountShared_univarAdultCoop_lci.pdf", height = 6, width = 8)
+hist(res$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
+
+## Multivariable analysis
+
+# Coefficient results
+median(res$multi_adult_coef)
+quantile(res$multi_adult_coef, c(0.025, 0.5, 0.975))
+
+# Lower CI results
+median(res$multi_adult_lci)
+quantile(res$multi_adult_lci, c(0.025, 0.5, 0.975))
+
+# Upper CI results
+median(res$multi_adult_uci)
+quantile(res$multi_adult_uci, c(0.025, 0.5, 0.975))
+
+
+# Plot main coefficient results
+med <- quantile(res$multi_adult_coef, 0.5)
+lci <- quantile(res$multi_adult_coef, 0.025)
+uci <- quantile(res$multi_adult_coef, 0.975)
+
+hist(res$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.018, 0.04), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/amountShared_multivarAdultCoop.pdf", height = 6, width = 8)
+hist(res$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.018, 0.04), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
+
+# Plot lower CI results
+med <- quantile(res$multi_adult_lci, 0.5)
+lci <- quantile(res$multi_adult_lci, 0.025)
+uci <- quantile(res$multi_adult_lci, 0.975)
+
+hist(res$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(-0.002, 0.03), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/amountShared_multivarAdultCoop_lci.pdf", height = 6, width = 8)
+hist(res$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(-0.002, 0.03), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
+
 
 
 
@@ -931,6 +1314,233 @@ TableS4
 
 # Save this table
 write_csv(TableS4, file = "../Results/tableS4.csv", quote = FALSE)
+
+
+
+### Interaction test for adult coop by age (as can't use random-slopes/random-effects) - E.g., to see whether there's an association between age and number of unique recipient in camps where adults were more cooperative, but not if adults were less cooperative.
+
+# Linear model
+full.numRec_int <- lmer(numRecipients ~ age + sex + rel + adult + age:adult + (1|camp), REML=FALSE, data = data)
+summary(full.numRec_int)
+
+# Poisson model
+full.numRec.p_int <- glmer(numRecipients ~ age + sex + rel + adult + age:adult + (1|camp), family = "poisson", data = data)
+summary(full.numRec.p_int)
+
+# Ordinal model
+full.numRec.o_int <- clmm(numRec_ord ~ age + sex + rel + adult + age:adult + (1|camp), data = data)
+summary(full.numRec.o_int)
+
+
+## Some convergence issues for the poisson and ordinal models, so will use the age and adult cooperation z-scores (which seems to resolve these problems)
+
+# Linear model
+full.numRec_int_z <- lmer(numRecipients ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), REML=FALSE, data = data)
+summary(full.numRec_int_z)
+confint(full.numRec_int_z)
+
+# Poisson model
+full.numRec.p_int_z <- glmer(numRecipients ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), family = "poisson", data = data)
+summary(full.numRec.p_int_z)
+exp(coef(summary(full.numRec.p_int_z)))
+exp(confint(full.numRec.p_int_z))
+
+# Ordinal model
+full.numRec.o_int_z <- clmm(numRec_ord ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), data = data)
+summary(full.numRec.o_int_z)
+exp(coef(summary(full.numRec.o_int_z)))
+exp(confint(full.numRec.o_int_z))
+
+## Formal likelihood ratio tests of inclusion of interaction term
+anova(full.numRec, full.numRec_int_z)
+anova(full.numRec.p, full.numRec.p_int_z)
+anova(full.numRec.o, full.numRec.o_int_z)
+
+
+### Further suggestion by reviewer for taking variation in adult levels of cooperation into consideration.
+
+## Our approach is as follows:
+# 1.	Sample from a normal distibution using the mean and standard error of adult cooperation from each camp, and use this as the average adult level of cooperation for said camp.
+# 2.	Run the models (both univariable and multivariable), and store the parameter estimates.
+# 3.	Iterate this process 1,000 times, sampling different adult levels of cooperation for each camp from the prior distribution each time.
+# 4.	Present the median and 95% credible intervals of these results.
+
+
+## Set seed and embed script in a loop 1,000 times, run univariable and multivariable models for adult cooperation, and store estimates in a table.
+set.seed(45678)
+iter <- 1000
+
+# Data frame to collect parameters of interest
+res_numRec <- as.data.frame(array(dim = c(iter, 9)))
+colnames(res_numRec) <- c("iteration", "uni_adult_coef", "uni_adult_se", "uni_adult_lci", "uni_adult_uci",
+                   "multi_adult_coef", "multi_adult_se", "multi_adult_lci", "multi_adult_uci")
+#head(res_numRec)
+
+# Loop over each iteration (takes approx half an hour on a standard laptop for 1,000 iterations)
+for (i in 1:iter) {
+  
+  # Print interation
+  print(paste("Processing iteration", i))
+  
+  # Create the dataset and add adult cooperation value from prior distribution
+  data_temp <- data
+  data_temp$adult_samp <- NA
+  data_temp$adult_samp[data_temp$camp == "P1"] <- rnorm(n = 1, mean = 59.2, sd = 3.73)
+  data_temp$adult_samp[data_temp$camp == "P2"] <- rnorm(n = 1, mean = 31.4, sd = 3.61)
+  data_temp$adult_samp[data_temp$camp == "P3"] <- rnorm(n = 1, mean = 52.8, sd = 3.47)
+  data_temp$adult_samp[data_temp$camp == "P4"] <- rnorm(n = 1, mean = 56.9, sd = 7.34)
+  data_temp$adult_samp[data_temp$camp == "P5"] <- rnorm(n = 1, mean = 38.5, sd = 6.44)
+  data_temp$adult_samp[data_temp$camp == "P6"] <- rnorm(n = 1, mean = 21.7, sd = 5.19)
+  data_temp$adult_samp[data_temp$camp == "P7"] <- rnorm(n = 1, mean = 28.2, sd = 4.28)
+  data_temp$adult_samp[data_temp$camp == "P8"] <- rnorm(n = 1, mean = 6.67, sd = 6.67)
+  data_temp$adult_samp[data_temp$camp == "P9"] <- rnorm(n = 1, mean = 0, sd = 0)
+  data_temp$adult_samp[data_temp$camp == "P10"] <- rnorm(n = 1, mean = 30.4, sd = 6.61)
+  data_temp$adult_samp[data_temp$camp == "P11"] <- rnorm(n = 1, mean = 59, sd = 5.47)
+  data_temp$adult_samp[data_temp$camp == "M1"] <- rnorm(n = 1, mean = 69.3, sd = 4.52)
+  data_temp$adult_samp[data_temp$camp == "M2"] <- rnorm(n = 1, mean = 49.3, sd = 7.81)
+  data_temp$adult_samp[data_temp$camp == "M3"] <- rnorm(n = 1, mean = 60.7, sd = 9.64)
+  
+  # Code any values < 0 as 0, and > 100 as 100 (as these values are impossible)
+  data_temp$adult_samp[data_temp$adult_samp < 0] <- 0
+  data_temp$adult_samp[data_temp$adult_samp > 100] <- 100
+  
+  # Run the univariable and multivariable models and store estimates
+  adult.numRec_samp <- lmer(numRecipients ~ adult_samp + (1|camp), REML=FALSE, data = data_temp)
+  #summary(adult.numRec_samp)
+  
+  full.numRec_samp <- lmer(numRecipients ~ age + sex + rel + adult_samp + (1|camp), REML=FALSE, data = data_temp)
+  #summary(full.numRec_samp)
+  
+  # Store these results
+  res_numRec[i, "iteration"] <- i
+  res_numRec[i, "uni_adult_coef"] <- coef(summary(adult.numRec_samp))[2,1]
+  res_numRec[i, "uni_adult_se"] <- coef(summary(adult.numRec_samp))[2,2]
+  res_numRec[i, "uni_adult_lci"] <- confint(adult.numRec_samp)[4,1]
+  res_numRec[i, "uni_adult_uci"] <- confint(adult.numRec_samp)[4,2] 
+  res_numRec[i, "multi_adult_coef"] <- coef(summary(full.numRec_samp))[5,1]
+  res_numRec[i, "multi_adult_se"] <- coef(summary(full.numRec_samp))[5,2]
+  res_numRec[i, "multi_adult_lci"] <- confint(full.numRec_samp)[7,1] 
+  res_numRec[i, "multi_adult_uci"] <- confint(full.numRec_samp)[7,2] 
+  
+}
+
+res_numRec
+
+# Save these results
+write_csv(res_numRec, file = "../Results/numberRecipients_adultVariation.csv", quote = FALSE)
+
+
+## Analyse iterations by taking median and 95% credible intervals as measures of effect (and make a nice histogram of these iterations)
+
+## Univariable analysis
+
+# Coefficient results
+median(res_numRec$uni_adult_coef)
+quantile(res_numRec$uni_adult_coef, c(0.025, 0.5, 0.975))
+
+# Lower CI results
+median(res_numRec$uni_adult_lci)
+quantile(res_numRec$uni_adult_lci, c(0.025, 0.5, 0.975))
+
+# Upper CI results
+median(res_numRec$uni_adult_uci)
+quantile(res_numRec$uni_adult_uci, c(0.025, 0.5, 0.975))
+
+
+# Plot main coefficient results
+med <- quantile(res_numRec$uni_adult_coef, 0.5)
+lci <- quantile(res_numRec$uni_adult_coef, 0.025)
+uci <- quantile(res_numRec$uni_adult_coef, 0.975)
+
+hist(res_numRec$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/numberRecipients_univarAdultCoop.pdf", height = 6, width = 8)
+hist(res_numRec$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
+
+# Plot lower CI results
+med <- quantile(res_numRec$uni_adult_lci, 0.5)
+lci <- quantile(res_numRec$uni_adult_lci, 0.025)
+uci <- quantile(res_numRec$uni_adult_lci, 0.975)
+
+hist(res_numRec$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.003, 0.032), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/numberRecipients_univarAdultCoop_lci.pdf", height = 6, width = 8)
+hist(res_numRec$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.003, 0.032), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
+
+## Multivariable analysis
+
+# Coefficient results
+median(res_numRec$multi_adult_coef)
+quantile(res_numRec$multi_adult_coef, c(0.025, 0.5, 0.975))
+
+# Lower CI results
+median(res_numRec$multi_adult_lci)
+quantile(res_numRec$multi_adult_lci, c(0.025, 0.5, 0.975))
+
+# Upper CI results
+median(res_numRec$multi_adult_uci)
+quantile(res_numRec$multi_adult_uci, c(0.025, 0.5, 0.975))
+
+
+# Plot main coefficient results
+med <- quantile(res_numRec$multi_adult_coef, 0.5)
+lci <- quantile(res_numRec$multi_adult_coef, 0.025)
+uci <- quantile(res_numRec$multi_adult_coef, 0.975)
+
+hist(res_numRec$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/numberRecipients_multivarAdultCoop.pdf", height = 6, width = 8)
+hist(res_numRec$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
+
+# Plot lower CI results
+med <- quantile(res_numRec$multi_adult_lci, 0.5)
+lci <- quantile(res_numRec$multi_adult_lci, 0.025)
+uci <- quantile(res_numRec$multi_adult_lci, 0.975)
+
+hist(res_numRec$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+
+pdf("../Results/numberRecipients_multivarAdultCoop_lci.pdf", height = 6, width = 8)
+hist(res_numRec$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
+     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
+abline(v = med, lty = 3, lwd = 5, col = "red")
+abline(v = lci, lty = 3, lwd = 3, col = "blue")
+abline(v = uci, lty = 3, lwd = 3, col = "blue")
+dev.off()
+
 
 
 
