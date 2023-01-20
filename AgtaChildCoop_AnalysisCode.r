@@ -11,20 +11,23 @@ rm(list = ls())
 #install.packages("tidyverse")
 library(tidyverse)
 
-#install.packages("lme4")
-library(lme4)
-
-#install.packages("lmerTest")
-library(lmerTest)
-
-#install.packages("ordinal")
-library(ordinal)
-
 #install.packages("gridExtra")
 library(gridExtra)
 
 #install.packages("dagitty")
 library(dagitty)
+
+#install.packages("rstan")
+library(rstan)
+
+#install.packages("posterior")
+library(posterior)
+
+#install.packages("brms")
+library(brms)
+
+#install.packages("ggmcmc")
+library(ggmcmc)
 
 
 # Set working directory
@@ -123,17 +126,22 @@ dev.off()
 # Summary stats of age by camp (for table S1)
 tableS1 <- data %>%
   group_by(camp) %>%
-  summarise(n = length(age), mean = round(mean(age), 1), sd = round(sd(age), 1), 
-            min = round(min(age), 1), max = round(max(age), 1))
+  summarise(n = length(age), n_males = sum(sex == 1), per_males = round((n_males / n) * 100, 1), 
+            mean = round(mean(age), 1), sd = round(sd(age), 1), 
+            min = round(min(age), 1), max = round(max(age), 1), 
+            mean_rel = round(mean(rel), 3), sd_rel = round(sd(rel), 3),
+            min_rel = round(min(rel), 3), max_rel = round(max(rel), 3), adult = round(mean(adult), 1))
 
 tableS1
 
 
 # Also want to add a 'total' column to the bottom
 total <- tribble(
-  ~camp, ~n, ~mean, ~sd, ~min, ~max,
-  "Total", length(data$age), round(mean(data$age), 1), round(sd(data$age), 1), 
-  round(min(data$age), 1), round(max(data$age), 1)
+  ~camp, ~n, ~n_males, ~per_males, ~mean, ~sd, ~min, ~max, ~mean_rel, ~sd_rel, ~min_rel, ~max_rel, ~adult,
+  "Total", nrow(data), sum(data$sex == 1), round((sum(data$sex == 1) / nrow(data)) * 100, 1), 
+  round(mean(data$age), 1), round(sd(data$age), 1), round(min(data$age), 1), round(max(data$age), 1), 
+  round(mean(data$rel), 3), round(sd(data$rel), 3), round(min(data$rel), 3), round(max(data$rel), 3),
+  round(mean(tableS1$adult), 1)
 )
 
 total
@@ -154,8 +162,8 @@ summary(data$rel)
 hist(data$rel)
 
 ## Average amount shared by adults in camp
-summary(data$adult)
-hist(data$adult)
+summary(tableS1$adult)
+hist(tableS1$adult)
 
 ## Amount shared by mother and father
 summary(data$mother)
@@ -194,27 +202,116 @@ dev.off()
 
 
 
-### Testing for camp-level differences in cooperation, including camp as a random effect to account for variation at this level (using 'ranova' function from lmerTest to run a likelihood ratio test)
-null.ml <- lmer(perGiven ~ (1|camp), REML=FALSE, data = data)
-ranova(null.ml)
+### Testing for camp-level differences in cooperation
 
-## Does addition of household RE improve model fit over null model? Marginally, but not really
-null.ml_hh <- lmer(perGiven ~ (1|household), REML=FALSE, data = data)
-ranova(null.ml_hh)
+## Single-level model (no random effects)
+null.noml <- brm(perGiven ~ 1, data = data, 
+                      warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 590951)
+summary(null.noml)
 
-## And adding a 'household' RE to the null ML model with just camp as an RE does not seem to improve model fit at all, and causes the model to have singularity/convergence issues. So will just use camp-only REs
-null.ml2 <- lmer(perGiven ~ (1|household) + (1|camp), REML=FALSE, data = data)
-ranova(null.ml2)
+null.noml <- add_criterion(null.noml, "loo")
+
+# Check convergence over time and between chains
+null.noml_trans <- ggs(null.noml)
+
+# All chains converged and stable
+ggplot(filter(null.noml_trans, Parameter %in% c("b_Intercept", "sigma")),
+       aes(x   = Iteration,
+           y   = value, 
+           col = as.factor(Chain)))+
+  geom_line() +
+  geom_vline(xintercept = 1000)+
+  facet_grid(Parameter ~ . ,
+             scale  = 'free_y',
+             switch = 'y')+
+  labs(title = "Caterpillar Plots", 
+       col   = "Chains")
+
+
+## Camp-level random effect
+null.ml_camp <- brm(perGiven ~ 1 + (1 | camp), data = data, 
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 881927)
+summary(null.ml_camp)
+
+null.ml_camp <- add_criterion(null.ml_camp, "loo")
+
+# Check convergence over time and between chains
+null.ml_camp_trans <- ggs(null.ml_camp)
+
+# All chains converged and stable
+ggplot(filter(null.ml_camp_trans, Parameter %in% c("b_Intercept", "sigma", "sd_camp__Intercept")),
+       aes(x   = Iteration,
+           y   = value, 
+           col = as.factor(Chain)))+
+  geom_line() +
+  geom_vline(xintercept = 1000)+
+  facet_grid(Parameter ~ . ,
+             scale  = 'free_y',
+             switch = 'y')+
+  labs(title = "Caterpillar Plots", 
+       col   = "Chains")
+
+
+## Household-level random effect
+null.ml_hh <- brm(perGiven ~ 1 + (1 | household), data = data, 
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 488054)
+summary(null.ml_hh)
+
+null.ml_hh <- add_criterion(null.ml_hh, "loo")
+
+# Check convergence over time and between chains
+null.ml_hh_trans <- ggs(null.ml_hh)
+
+# All chains converged and stable
+ggplot(filter(null.ml_hh_trans, Parameter %in% c("b_Intercept", "sigma", "sd_household__Intercept")),
+       aes(x   = Iteration,
+           y   = value, 
+           col = as.factor(Chain)))+
+  geom_line() +
+  geom_vline(xintercept = 1000)+
+  facet_grid(Parameter ~ . ,
+             scale  = 'free_y',
+             switch = 'y')+
+  labs(title = "Caterpillar Plots", 
+       col   = "Chains")
+
+
+## Household-level and camp-level random effects
+null.ml_hh_camp <- brm(perGiven ~ 1 + (1 | household) + (1 | camp), data = data, 
+                            warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 225559)
+summary(null.ml_hh_camp)
+
+null.ml_hh_camp <- add_criterion(null.ml_hh_camp, "loo")
+
+# Check convergence over time and between chains
+null.ml_hh_camp_trans <- ggs(null.ml_hh_camp)
+
+# All chains converged and stable
+ggplot(filter(null.ml_hh_camp_trans, Parameter %in% c("b_Intercept", "sigma", "sd_camp__Intercept", 
+                                                           "sd_household__Intercept")),
+       aes(x   = Iteration,
+           y   = value, 
+           col = as.factor(Chain)))+
+  geom_line() +
+  geom_vline(xintercept = 1000)+
+  facet_grid(Parameter ~ . ,
+             scale  = 'free_y',
+             switch = 'y')+
+  labs(title = "Caterpillar Plots", 
+       col   = "Chains")
+
+
+## Compare these models - Camp only random effect is the best-fitting model, with no improvement when including household
+loo_compare(null.noml, null.ml_camp, null.ml_hh, null.ml_hh_camp, criterion = "loo")
 
 data <- data %>%
   select(-household)
 
 
 # The MLM is a much better fit to the data than the basic linear model - Camp level differences explain
-# ~24% of the variance in child offers
-summary(null.ml)
-as.data.frame(lme4::VarCorr(null.ml))$vcov[1] / 
-    (as.data.frame(lme4::VarCorr(null.ml))$vcov[1] + as.data.frame(lme4::VarCorr(null.ml))$vcov[2])
+# ~29% of the variance in child offers
+hyp <- "sd_camp__Intercept^2 / (sd_camp__Intercept^2 + sigma^2) = 0"
+hypothesis(null.ml_camp, hyp, class = NULL)
 
 # Plot this camp-level variation
 (fig1 <- ggplot(data = data,
@@ -252,60 +349,47 @@ campVar
 
 
 #######################################################################################
-## Now run the cooperation model
+## Now run the cooperation models
 
-# First, create an age squared variable and make sure age association is not quadratic (i.e., inclusion
-# of age-squared term does not improve model fit relative to linear age only model) - Age squared not
-# improve model fit, so not include in final models
-data <- data %>%
-  mutate(age2 = age^2)
-
-age2.give <- lmer(perGiven ~ age + age2 + (1|camp), REML=FALSE, data = data)
-summary(age2.give)
-
-# Ideally would also explore whether random-slopes by age/camp also improves model fit, but are issues with model fit/convergence so cannot explore in depth (this could be due to small sample sizes, or due to little/no variation in the random slopes; if the former, then perhaps the model is mispecified and age slopes do differ by camp, but if the latter then the random-intercept only model may be appropriate). Will proceed just using random-intercepts with age as a linear predictor.
-age.slopes <- lmer(perGiven ~ age + (age|camp), REML = FALSE, data = data)
-summary(age.slopes)
-
-data <- data %>%
-  select(-age2)
-
-
-# Next, run a separate model for each predictor
-age.give <- lmer(perGiven ~ age + (1|camp), REML=FALSE, data = data)
+# First, run a separate model for each predictor
+age.give <- brm(perGiven ~ age + (1 | camp), data = data, 
+                warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 142053)
 summary(age.give)
 
-sex.give <- lmer(perGiven ~ sex + (1|camp), REML=FALSE, data = data)
+sex.give <- brm(perGiven ~ sex + (1 | camp), data = data, 
+                warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 456988)
 summary(sex.give)
 
-rel.give <- lmer(perGiven ~ rel + (1|camp), REML=FALSE, data = data)
+rel.give <- brm(perGiven ~ rel + (1 | camp), data = data, 
+                warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 201017)
 summary(rel.give)
 
-adult.give <- lmer(perGiven ~ adult + (1|camp), REML=FALSE, data = data)
+adult.give <- brm(perGiven ~ adult + (1 | camp), data = data, 
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 16191)
 summary(adult.give)
 
 # Now run a combined model which includes all predictors (based on our DAG, as we assume that these variables are relatively independent, the results of full model should be similar to individual models - and they are)
-full.give <- lmer(perGiven ~ age + sex + rel + adult + (1|camp), REML=FALSE, data = data)
+full.give <- brm(perGiven ~ age + sex + rel + adult + (1 | camp), data = data, 
+                 warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 687570)
 summary(full.give)
 
 # Save these results in a table and export to CSV
 table2 <- as.data.frame(cbind(c(rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)),
                          c(rep(c("Univariable", "Multivariable"), each = 4)),
                          c(rep(c("Individual", "Individual", "Individual", "Camp"), 2)),
-                         c(coef(summary(age.give))[2,1], coef(summary(sex.give))[2,1],
-                           coef(summary(rel.give))[2,1], coef(summary(adult.give))[2,1],
-                           coef(summary(full.give))[2:5,1]),
-                         c(coef(summary(age.give))[2,2], coef(summary(sex.give))[2,2],
-                           coef(summary(rel.give))[2,2], coef(summary(adult.give))[2,2],
-                           coef(summary(full.give))[2:5,2]),
-                         c(confint(age.give)[4,1], confint(sex.give)[4,1], confint(rel.give)[4,1], 
-                           confint(adult.give)[4,1], confint(full.give)[4:7,1]), 
-                         c(confint(age.give)[4,2], confint(sex.give)[4,2], confint(rel.give)[4,2], 
-                           confint(adult.give)[4,2], confint(full.give)[4:7,2]),
-                         c(coef(summary(age.give))[2,5], coef(summary(sex.give))[2,5],
-                           coef(summary(rel.give))[2,5], coef(summary(adult.give))[2,5],
-                           coef(summary(full.give))[2:5,5])))
-colnames(table2) <- c("Variable", "Model", "Level", "Coefficient", "SE", "LCI", "UCI", "p")
+                         c(fixef(age.give)[2,1], fixef(sex.give)[2,1],
+                           fixef(rel.give)[2,1], fixef(adult.give)[2,1],
+                           fixef(full.give)[2:5,1]),
+                         c(fixef(age.give)[2,2], fixef(sex.give)[2,2],
+                           fixef(rel.give)[2,2], fixef(adult.give)[2,2],
+                           fixef(full.give)[2:5,2]),
+                         c(fixef(age.give)[2,3], fixef(sex.give)[2,3],
+                           fixef(rel.give)[2,3], fixef(adult.give)[2,3],
+                           fixef(full.give)[2:5,3]),
+                         c(fixef(age.give)[2,4], fixef(sex.give)[2,4],
+                           fixef(rel.give)[2,4], fixef(adult.give)[2,4],
+                           fixef(full.give)[2:5,4])))
+colnames(table2) <- c("Variable", "Model", "Level", "Coefficient", "SE", "LCI", "UCI")
 
 # Convert estimates to numeric and round
 table2 <- table2 %>%
@@ -316,9 +400,7 @@ table2 <- table2 %>%
   mutate(LCI = as.numeric(LCI)) %>%
   mutate(LCI = round(LCI, 3)) %>%
   mutate(UCI = as.numeric(UCI)) %>%
-  mutate(UCI = round(UCI, 3)) %>%
-  mutate(p = as.numeric(p)) %>%
-  mutate(p = round(p, 3))
+  mutate(UCI = round(UCI, 3))
 
 table2
 
@@ -331,12 +413,12 @@ pdf("../Results/FigS3_Residuals_FullCoopModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
-hist(residuals(full.give), main = NULL, xlab = "Residuals")
-text(-2.75, 27.5, "A", cex = 2.5)
+hist(residuals(full.give)[, "Estimate"], main = NULL, xlab = "Residuals")
+text(-2, 30, "A", cex = 2.5)
 
-qqnorm(residuals(full.give), main = NULL)
-qqline(residuals(full.give))
-text(-2.5, 3, "B", cex = 2.5)
+qqnorm(residuals(full.give)[, "Estimate"], main = NULL)
+qqline(residuals(full.give)[, "Estimate"])
+text(-2.25, 2.5, "B", cex = 2.5)
 
 dev.off()
 
@@ -346,7 +428,8 @@ par(mfrow = c(1, 1))
 # Now test for heteroskedascity - It's a bit odd, but I don't think it's '*too* bad...(mainly looks weird because the range of values is only between 0 and 5)
 pdf("../Results/FigS4_Heteroskedasticity_FullCoopModel.pdf", width = 8, height = 6)
 
-plot(residuals(full.give) ~ fitted.values(full.give), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(full.give)[, "Estimate"] ~ fitted.values(full.give)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 
 dev.off()
 
@@ -361,10 +444,19 @@ campData <- data %>%
 
 head(campData)
 
+## Also make a dataframe with the predicted amount shared for each level of adult cooperation (note that for brms, to get predicted confidence intervals need to use 'fitted', as 'predict' gives prediction intervals)
+adult <- 0:70
+df_temp <- as.data.frame(cbind(adult))
+df_temp$fit <- fitted(adult.give, newdata = df_temp, re_formula = NA)[,1]
+df_temp$fit_lci <- fitted(adult.give, newdata = df_temp, re_formula = NA)[,3]
+df_temp$fit_uci <- fitted(adult.give, newdata = df_temp, re_formula = NA)[,4]
+head(df_temp)
+
 set.seed(1234)
 (fig2 <- ggplot(data = NULL) +
-    geom_smooth(data = campData, aes(x = adultCoop, y = childCoop),
-                method = "lm", colour = "black", fill = "gray80") +
+    geom_ribbon(data = df_temp, aes(ymin = fit_lci, ymax = fit_uci, x = adult), fill = "gray90") +
+    geom_line(data = df_temp, aes(x = adult, y = fit),
+              colour = "black", size = 1) +
     ylab("Number of gifts shared by children") +
     xlab("Average adult level of cooperation in camp (%)") +
     theme_bw() +
@@ -385,399 +477,47 @@ dev.off()
 
 
 ## Also want to make a plot of predicted amount given, but using fitted values, rather than raw data (to allow adjustment for other variables). Will use results from the full model here (note that even though levels of cooperation can only take integer values between 0 and 5, as these fitted values are taken from a linear model predicted levels of cooperation are on a continuous scale. While this may be an abuse of the data, it is useful to show the association between age and levels of cooperation [which are more difficult to visualise with integer outcomes here]; additionally, as the results of this linear model are broadly comparable to those of poisson and ordinal models below, this gives confidence to these overall patterns.)
-data$fit <- predict(full.give)
+data$fit <- fitted(full.give)[, "Estimate"]
 summary(data$fit)
 
-(age_fit <- ggplot(data = data,
-                     aes(x = age, y = fit)) +
-    geom_smooth(method = "loess", colour = "black") +
-    geom_point() +
+newdata_age <- data.frame(age = 3:18, sex = mean(data$sex), rel = mean(data$rel), adult = mean(tableS1$adult))
+newdata_age$fit <- fitted(full.give, newdata = newdata_age, re_formula = NA)[, "Estimate"]
+newdata_age$fit_lci <- fitted(full.give, newdata = newdata_age, re_formula = NA)[, "Q2.5"]
+newdata_age$fit_uci <- fitted(full.give, newdata = newdata_age, re_formula = NA)[, "Q97.5"]
+head(newdata_age)
+
+(age_fit <- ggplot(data = NULL) +
+    geom_ribbon(data = newdata_age, aes(x = age, ymin = fit_lci, ymax = fit_uci), fill = "gray90") +
+    geom_point(data = data, aes(x = age, y = fit_resp)) +
+    geom_line(data = newdata_age, aes(x = age, y = fit), colour = "black", size = 1) +
     ylab("Predicted amount shared by children") +
+    xlab("Child age (years)") +
     theme_bw() +
     theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
-    theme(axis.title.x = element_blank(),
+    theme(axis.title.x = element_text(size = 18),
           axis.text.x = element_text(size = 14),
           axis.title.y = element_text(size = 18),
           axis.text.y = element_text(size = 14)) +
-    scale_y_continuous(breaks = seq(0, 3, 1), limits = c(0, 3.1)) +
+    scale_y_continuous(breaks = seq(0, 3, 1), limits = c(-0.2, 3.3)) +
     scale_x_continuous(breaks = seq(3, 18, 3)))
 
 
 
-### Suggested by a reviewer to re-run analyses removing high/low ages (3, or 15 to 18), as well as small camps (with <5 children in them). Personally disagree with this, as generally bad form to throw away data, but will run analyses and report in response to reviewers (but not final paper) that results do not materially change.
-data_rerun <- data %>%
-  filter(camp != "P1" & camp != "M3") %>%
-  filter(age >= 4 & age < 15)
-
-summary(data_rerun)
-
-# Run a separate model for each predictor
-age.give_rerun <- lmer(perGiven ~ age + (1|camp), REML=FALSE, data = data_rerun)
-summary(age.give_rerun)
-
-sex.give_rerun <- lmer(perGiven ~ sex + (1|camp), REML=FALSE, data = data_rerun)
-summary(sex.give_rerun)
-
-rel.give_rerun <- lmer(perGiven ~ rel + (1|camp), REML=FALSE, data = data_rerun)
-summary(rel.give_rerun)
-
-adult.give_rerun <- lmer(perGiven ~ adult + (1|camp), REML=FALSE, data = data_rerun)
-summary(adult.give_rerun)
-
-# Now run a combined model which includes all predictors (based on our DAG, as we assume that these variables are relatively independent, the results of full model should be similar to individual models - and they are)
-full.give_rerun <- lmer(perGiven ~ age + sex + rel + adult + (1|camp), REML=FALSE, data = data_rerun)
-summary(full.give_rerun)
-
-# Save these results in a table and export to CSV
-table2_rerun <- as.data.frame(cbind(c(rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)),
-                              c(rep(c("Univariable", "Multivariable"), each = 4)),
-                              c(rep(c("Individual", "Individual", "Individual", "Camp"), 2)),
-                              c(coef(summary(age.give_rerun))[2,1], coef(summary(sex.give_rerun))[2,1],
-                                coef(summary(rel.give_rerun))[2,1], coef(summary(adult.give_rerun))[2,1],
-                                coef(summary(full.give_rerun))[2:5,1]),
-                              c(coef(summary(age.give_rerun))[2,2], coef(summary(sex.give_rerun))[2,2],
-                                coef(summary(rel.give_rerun))[2,2], coef(summary(adult.give_rerun))[2,2],
-                                coef(summary(full.give_rerun))[2:5,2]),
-                              c(confint(age.give_rerun)[4,1], confint(sex.give_rerun)[4,1], 
-                                confint(rel.give_rerun)[4,1], confint(adult.give_rerun)[4,1], 
-                                confint(full.give_rerun)[4:7,1]), 
-                              c(confint(age.give_rerun)[4,2], confint(sex.give_rerun)[4,2], 
-                                confint(rel.give_rerun)[4,2], confint(adult.give_rerun)[4,2], 
-                                confint(full.give_rerun)[4:7,2]),
-                              c(coef(summary(age.give_rerun))[2,5], coef(summary(sex.give_rerun))[2,5],
-                                coef(summary(rel.give_rerun))[2,5], coef(summary(adult.give_rerun))[2,5],
-                                coef(summary(full.give_rerun))[2:5,5])))
-colnames(table2_rerun) <- c("Variable", "Model", "Level", "Coefficient", "SE", "LCI", "UCI", "p")
-
-# Convert estimates to numeric and round
-table2_rerun <- table2_rerun %>%
-  mutate(Coefficient = as.numeric(Coefficient)) %>%
-  mutate(Coefficient = round(Coefficient, 3)) %>%
-  mutate(SE = as.numeric(SE)) %>%
-  mutate(SE = round(SE, 3)) %>%
-  mutate(LCI = as.numeric(LCI)) %>%
-  mutate(LCI = round(LCI, 3)) %>%
-  mutate(UCI = as.numeric(UCI)) %>%
-  mutate(UCI = round(UCI, 3)) %>%
-  mutate(p = as.numeric(p)) %>%
-  mutate(p = round(p, 3))
-
-table2_rerun
-
-write_csv(table2_rerun, "../Results/table2_rerun.csv", quote = FALSE)
-
-
-## As a sensitivity analysis, will run the same models, but using poisson and ordinal regression/cumulative link models, as the number of gifts given (0 to 5) isn't really continuous - CLMs predict the odds (or log-odds) of being in a higher outcome category (amount shared), for a one-unit increase in the predictor variable. This is quite similar to poisson regression, but as poisson regressions require count data there's no (theoretical) upper value. But in our example there is an upper value (5) in which case an ordinal model may also be appropriate. Also, the distribution of our data is skewed, as there is an over-abundance of '0's for a poisson distribution. However, if all models give qualitatively similar results, this bolsters our confidence in our conclusions, even if some model assumptions are violated.
-
-## Start with poisson distribution, because it (potentially) meets model assumptions better, which is used for count data (which is what we have here)
-
-# The mean and variances are roughly equivalent for  number of gifts, meeting one of the assumptions of a  poisson model - Although there is an excess of '0's, which does violate poisson assumptions.
-(mean(data$perGiven)); (var(data$perGiven))
-barplot(table(data$perGiven))
-
-
-# Fit the individual and full models again
-age.give.p <- glmer(perGiven ~ age + (1|camp), family = "poisson", data = data)
-summary(age.give.p)
-
-sex.give.p <- glmer(perGiven ~ sex + (1|camp), family = "poisson", data = data)
-summary(sex.give.p)
-
-rel.give.p <- glmer(perGiven ~ rel + (1|camp), family = "poisson", data = data)
-summary(rel.give.p)
-
-adult.give.p <- glmer(perGiven ~ adult + (1|camp), family = "poisson", data = data)
-summary(adult.give.p)
-
-# Now run a combined model which includes all predictors
-full.give.p <- glmer(perGiven ~ age + sex + rel + adult + (1|camp), family = "poisson", data = data)
-summary(full.give.p)
-
-
-### Now for the ordinal regression model
-# Construct ordinal variable of number of resources given to others - Will also combine 4 and 5 gifts together, as low number of children gave 5
-data$perGiven_ord <- data$perGiven
-data$perGiven_ord[data$perGiven_ord == 5] <- 4
-data$perGiven_ord <- factor(data$perGiven_ord, ordered = T)
-table(data$perGiven_ord)
-
-# Fit the individual and full models again
-age.give.o <- clmm(perGiven_ord ~ age + (1|camp), data = data)
-summary(age.give.o)
-
-sex.give.o <- clmm(perGiven_ord ~ sex + (1|camp), data = data)
-summary(sex.give.o)
-
-rel.give.o <- clmm(perGiven_ord ~ rel + (1|camp), data = data)
-summary(rel.give.o)
-
-adult.give.o <- clmm(perGiven_ord ~ adult + (1|camp), data = data)
-summary(adult.give.o)
-
-# Now run a combined model which includes all predictors
-full.give.o <- clmm(perGiven_ord ~ age + sex + rel + adult + (1|camp), data = data)
-summary(full.give.o)
-
-
-## Make a table to save all these results to
-model <- rep(c("Separate", "Full"), each = 4)
-var <- rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)
-
-tableS2 <- as.data.frame(cbind(model, var))
-tableS2
-
-# I'm sure there's a better way of combining results, but at least it works, and once this is set up I wont have to repeat it again if I re-run the models.
-tableS2$linear_coef[tableS2$model == "Separate" & var == "Age"] <- round(coef(summary(age.give))[2, 1], 3)
-tableS2$linear_se[tableS2$model == "Separate" & var == "Age"] <- round(coef(summary(age.give))[2, 2], 3)
-tableS2$linear_lci[tableS2$model == "Separate" & var == "Age"] <- round(confint(age.give)[4, 1], 3)
-tableS2$linear_uci[tableS2$model == "Separate" & var == "Age"] <- round(confint(age.give)[4, 2], 3)
-tableS2$linear_p[tableS2$model == "Separate" & var == "Age"] <- round(coef(summary(age.give))[2, 5], 3)
-
-tableS2$linear_coef[tableS2$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.give))[2, 1], 3)
-tableS2$linear_se[tableS2$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.give))[2, 2], 3)
-tableS2$linear_lci[tableS2$model == "Separate" & var == "Sex"] <- round(confint(sex.give)[4, 1], 3)
-tableS2$linear_uci[tableS2$model == "Separate" & var == "Sex"] <- round(confint(sex.give)[4, 2], 3)
-tableS2$linear_p[tableS2$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.give))[2, 5], 3)
-
-tableS2$linear_coef[tableS2$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.give))[2, 1], 3)
-tableS2$linear_se[tableS2$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.give))[2, 2], 3)
-tableS2$linear_lci[tableS2$model == "Separate" & var == "Relatedness"] <- round(confint(rel.give)[4, 1], 3)
-tableS2$linear_uci[tableS2$model == "Separate" & var == "Relatedness"] <- round(confint(rel.give)[4, 2], 3)
-tableS2$linear_p[tableS2$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.give))[2, 5], 3)
-
-tableS2$linear_coef[tableS2$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.give))[2, 1], 3)
-tableS2$linear_se[tableS2$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.give))[2, 2], 3)
-tableS2$linear_lci[tableS2$model == "Separate" & var == "Adult coop"] <- round(confint(adult.give)[4, 1], 3)
-tableS2$linear_uci[tableS2$model == "Separate" & var == "Adult coop"] <- round(confint(adult.give)[4, 2], 3)
-tableS2$linear_p[tableS2$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.give))[2, 5], 3)
-
-tableS2$linear_coef[tableS2$model == "Full"] <- round(coef(summary(full.give))[2:5, 1], 3)
-tableS2$linear_se[tableS2$model == "Full"] <- round(coef(summary(full.give))[2:5, 2], 3)
-tableS2$linear_lci[tableS2$model == "Full"] <- round(confint(full.give)[4:7, 1], 3)
-tableS2$linear_uci[tableS2$model == "Full"] <- round(confint(full.give)[4:7, 2], 3)
-tableS2$linear_p[tableS2$model == "Full"] <- round(coef(summary(full.give))[2:5, 5], 3)
-
-tableS2
-
-
-# Poisson results
-tableS2$poisson_coef[tableS2$model == "Separate" & var == "Age"] <- round(exp(coef(summary(age.give.p))[2, 1]), 3)
-tableS2$poisson_lci[tableS2$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.p)[3, 1]), 3)
-tableS2$poisson_uci[tableS2$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.p)[3, 2]), 3)
-tableS2$poisson_p[tableS2$model == "Separate" & var == "Age"] <- round(coef(summary(age.give.p))[2, 4], 3)
-
-tableS2$poisson_coef[tableS2$model == "Separate" & var == "Sex"] <- round(exp(coef(summary(sex.give.p))[2, 1]), 3)
-tableS2$poisson_lci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.p)[3, 1]), 3)
-tableS2$poisson_uci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.p)[3, 2]), 3)
-tableS2$poisson_p[tableS2$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.give.p))[2, 4], 3)
-
-tableS2$poisson_coef[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(coef(summary(rel.give.p))[2, 1]), 3)
-tableS2$poisson_lci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.p)[3, 1]), 3)
-tableS2$poisson_uci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.p)[3, 2]), 3)
-tableS2$poisson_p[tableS2$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.give.p))[2, 4], 3)
-
-tableS2$poisson_coef[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(coef(summary(adult.give.p))[2, 1]), 3)
-tableS2$poisson_lci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.p)[3, 1]), 3)
-tableS2$poisson_uci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.p)[3, 2]), 3)
-tableS2$poisson_p[tableS2$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.give.p))[2, 4], 3)
-
-tableS2$poisson_coef[tableS2$model == "Full"] <- round(exp(coef(summary(full.give.p))[2:5, 1]), 3)
-tableS2$poisson_lci[tableS2$model == "Full"] <- round(exp(confint(full.give.p)[3:6, 1]), 3)
-tableS2$poisson_uci[tableS2$model == "Full"] <- round(exp(confint(full.give.p)[3:6, 2]), 3)
-tableS2$poisson_p[tableS2$model == "Full"] <- round(coef(summary(full.give.p))[2:5, 4], 3)
-
-tableS2
-
-
-# Ordinal regression results
-tableS2$ord_coef[tableS2$model == "Separate" & var == "Age"] <- round(exp(coef(summary(age.give.o))[5, 1]), 3)
-tableS2$ord_lci[tableS2$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.o)[5, 1]), 3)
-tableS2$ord_uci[tableS2$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.o)[5, 2]), 3)
-tableS2$ord_p[tableS2$model == "Separate" & var == "Age"] <- round(coef(summary(age.give.o))[5, 4], 3)
-
-tableS2$ord_coef[tableS2$model == "Separate" & var == "Sex"] <- round(exp(coef(summary(sex.give.o))[5, 1]), 3)
-tableS2$ord_lci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.o)[5, 1]), 3)
-tableS2$ord_uci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.o)[5, 2]), 3)
-tableS2$ord_p[tableS2$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.give.o))[5, 4], 3)
-
-tableS2$ord_coef[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(coef(summary(rel.give.o))[5, 1]), 3)
-tableS2$ord_lci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.o)[5, 1]), 3)
-tableS2$ord_uci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.o)[5, 2]), 3)
-tableS2$ord_p[tableS2$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.give.o))[5, 4], 3)
-
-tableS2$ord_coef[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(coef(summary(adult.give.o))[5, 1]), 3)
-tableS2$ord_lci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.o)[5, 1]), 3)
-tableS2$ord_uci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.o)[5, 2]), 3)
-tableS2$ord_p[tableS2$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.give.o))[5, 4], 3)
-
-tableS2$ord_coef[tableS2$model == "Full"] <- round(exp(coef(summary(full.give.o))[5:8, 1]), 3)
-tableS2$ord_lci[tableS2$model == "Full"] <- round(exp(confint(full.give.o)[5:8, 1]), 3)
-tableS2$ord_uci[tableS2$model == "Full"] <- round(exp(confint(full.give.o)[5:8, 2]), 3)
-tableS2$ord_p[tableS2$model == "Full"] <- round(coef(summary(full.give.o))[5:8, 4], 3)
-
-tableS2
-
-# Save this table
-write_csv(tableS2, file = "../Results/tableS2.csv", quote = FALSE)
-
-
-
-### Reviewer also suggested running a logistic model with each keep vs share decision as the outcome. Have included these results in the response to reviewer document, but not in the main text (as the results are comparable, and there are already enough sensitivity analyses in the main text)
-
-# Replicate data so is repeated 5 times
-data_binary <- data %>%
-  bind_rows(replicate(4, data, simplify = FALSE)) %>%
-  arrange(id) %>%
-  group_by(id) %>%
-  mutate(trial = row_number()) %>%
-  ungroup(id)
-
-# Create a new variable saying whether a resource was shared or not, based on the number in 'perGiven' (as we're not interested in the order in which gifts were shared, this should not matter)
-data_binary <- data_binary %>%
-  mutate(shared = ifelse(trial <= perGiven, 1, 0))
-
-summary(data_binary)
-head(data_binary, n = 20L)
-
-
-## Now run a multi-level logistic model with both id and camp and random-effects
-
-# Fit the individual and full models again
-age.give.log <- glmer(shared ~ age + (1|id) + (1|camp), family = "binomial", data = data_binary)
-summary(age.give.log)
-
-sex.give.log <- glmer(shared ~ sex + (1|id) + (1|camp), family = "binomial", data = data_binary)
-summary(sex.give.log)
-
-rel.give.log <- glmer(shared ~ rel + (1|id) + (1|camp), family = "binomial", data = data_binary)
-summary(rel.give.log)
-
-adult.give.log <- glmer(shared ~ adult + (1|id) + (1|camp), family = "binomial", data = data_binary)
-summary(adult.give.log)
-
-# Now run a combined model which includes all predictors (some convergence warnings, but results look sensible and comparable to linear, ordinal and poisson results)
-full.give.log <- glmer(shared ~ age + sex + rel + adult + (1|id) + (1|camp), family = "binomial", data = data_binary)
-summary(full.give.log)
-
-
-## Make a table to save all these results to
-model <- rep(c("Separate", "Full"), each = 4)
-var <- rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)
-
-tableS2_log <- as.data.frame(cbind(model, var))
-tableS2_log
-
-# Combine results together
-tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Age"] <- round(exp(coef(summary(age.give.log))[2, 1]), 3)
-tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.log)[4, 1]), 3)
-tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Age"] <- round(exp(confint(age.give.log)[4, 2]), 3)
-tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Age"] <- round(coef(summary(age.give.log))[2, 4], 3)
-
-tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Sex"] <- round(exp(coef(summary(sex.give.log))[2, 1]), 3)
-tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.log)[4, 1]), 3)
-tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.give.log)[4, 2]), 3)
-tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.give.log))[2, 4], 3)
-
-tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(exp(coef(summary(rel.give.log))[2, 1]), 3)
-tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.log)[4, 1]), 3)
-tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.give.log)[4, 2]), 3)
-tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.give.log))[2, 4], 3)
-
-tableS2_log$log_coef[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(exp(coef(summary(adult.give.log))[2, 1]), 3)
-tableS2_log$log_lci[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.log)[4, 1]), 3)
-tableS2_log$log_uci[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.give.log)[4, 2]), 3)
-tableS2_log$log_p[tableS2_log$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.give.log))[2, 4], 3)
-
-tableS2_log$log_coef[tableS2_log$model == "Full"] <- round(exp(coef(summary(full.give.log))[2:5, 1]), 3)
-tableS2_log$log_lci[tableS2_log$model == "Full"] <- round(exp(confint(full.give.log)[4:7, 1]), 3)
-tableS2_log$log_uci[tableS2_log$model == "Full"] <- round(exp(confint(full.give.log)[4:7, 2]), 3)
-tableS2_log$log_p[tableS2_log$model == "Full"] <- round(coef(summary(full.give.log))[2:5, 4], 3)
-
-tableS2_log
-
-# Save this table
-write_csv(tableS2_log, file = "../Results/tableS2_log.csv", quote = FALSE)
-
-
-
-### Interaction test for adult coop by age (as can't use random-slopes/random-effects) - E.g., to see whether there's an association between age and cooperation in camps where adults were more cooperative, but not if adults were less cooperative.
-
-# Linear model
-full.give_int <- lmer(perGiven ~ age + sex + rel + adult + age:adult + (1|camp), REML=FALSE, data = data)
-summary(full.give_int)
-
-# Poisson model
-full.give.p_int <- glmer(perGiven ~ age + sex + rel + adult + age:adult + (1|camp), family = "poisson", data = data)
-summary(full.give.p_int)
-
-# Ordinal model
-full.give.o_int <- clmm(perGiven_ord ~ age + sex + rel + adult + age:adult + (1|camp), data = data)
-summary(full.give.o_int)
-
-
-## Some convergence issues for the poisson and ordinal models, so will convert age and adult cooperation to z-scores (which seems to resolve these problems)
-data <- data %>%
-  mutate(age_z = (age - mean(age)) / sd(age))
-
-(data_camp <- data %>%
-    group_by(camp) %>%
-    summarise(mean_adult = mean(adult)))
-
-data <- data %>%
-  mutate(adult_z = (adult - mean(data_camp$mean_adult)) / sd(data_camp$mean_adult))
-
-summary(data)
-
-# Linear model
-full.give_int_z <- lmer(perGiven ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), REML=FALSE, data = data)
-summary(full.give_int_z)
-confint(full.give_int_z)
-
-# Poisson model
-full.give.p_int_z <- glmer(perGiven ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), family = "poisson", data = data)
-summary(full.give.p_int_z)
-exp(coef(summary(full.give.p_int_z)))
-exp(confint(full.give.p_int_z))
-
-# Ordinal model
-full.give.o_int_z <- clmm(perGiven_ord ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), data = data)
-summary(full.give.o_int_z)
-exp(coef(summary(full.give.o_int_z)))
-exp(confint(full.give.o_int_z))
-
-
-## Formal likelihood ratio tests of inclusion of interaction term
-anova(full.give, full.give_int_z)
-anova(full.give.p, full.give.p_int_z)
-anova(full.give.o, full.give.o_int_z)
-
-
-### Further suggestion by reviewer for taking variation in adult levels of cooperation into consideration.
+### Conducting sensitivity analysis to take variation in adult levels of cooperation into consideration.
 
 ## Our approach is as follows:
-  # 1.	Sample from a normal distribution using the mean and standard error of adult cooperation from each camp, and use this as the average adult level of cooperation for said camp.
-  # 2.	Run the models (both univariable and multivariable), and store the parameter estimates.
-  # 3.	Iterate this process 1,000 times, sampling different adult levels of cooperation for each camp from the prior distribution each time.
-  # 4.	Present the median and 95% credible intervals of these results.
+# 1.	Sample from a normal distribution using the mean and standard error of adult cooperation from each camp, and use this as the average adult level of cooperation for said camp and store these 1,000 datasets.
+# 2.	Run the models (both univariable and multivariable) using the command 'brm_multiple' which runs the model in the 1,000 datasets and combines the results together.
 
 
-## Set seed and embed script in a loop 1,000 times, run univariable and multivariable models for adult cooperation, and store estimates in a table.
-set.seed(5678)
-iter <- 1000
+## First, create 1,000 datasets with different adult cooperation values
+set.seed(52494)
+n <- 1000
 
-# Data frame to collect parameters of interest
-res <- as.data.frame(array(dim = c(iter, 9)))
-colnames(res) <- c("iteration", "uni_adult_coef", "uni_adult_se", "uni_adult_lci", "uni_adult_uci",
-                   "multi_adult_coef", "multi_adult_se", "multi_adult_lci", "multi_adult_uci")
-#head(res)
+df_list <- list() # Initialise an empty list to add dataframes to
 
-# Loop over each iteration (takes approx half an hour on a standard laptop for 1,000 iterations)
-for (i in 1:iter) {
-  
-  # Print interation
-  print(paste("Processing iteration", i))
-  
-  # Create the dataset and add adult cooperation value from prior distribution
+# Loop over the number of lists to create, and vary adult levels of cooperation in each
+for (i in 1:n) {
   data_temp <- data
   data_temp$adult_samp <- NA
   data_temp$adult_samp[data_temp$camp == "P1"] <- rnorm(n = 1, mean = 59.2, sd = 3.73)
@@ -794,149 +534,284 @@ for (i in 1:iter) {
   data_temp$adult_samp[data_temp$camp == "M1"] <- rnorm(n = 1, mean = 69.3, sd = 4.52)
   data_temp$adult_samp[data_temp$camp == "M2"] <- rnorm(n = 1, mean = 49.3, sd = 7.81)
   data_temp$adult_samp[data_temp$camp == "M3"] <- rnorm(n = 1, mean = 60.7, sd = 9.64)
-
-  # Code any values < 0 as 0, and > 100 as 100 (as these values are impossible)
-  data_temp$adult_samp[data_temp$adult_samp < 0] <- 0
-  data_temp$adult_samp[data_temp$adult_samp > 100] <- 100
   
-  # Run the univariable and multivariable models and store estimates
-  adult.give_samp <- lmer(perGiven ~ adult_samp + (1|camp), REML=FALSE, data = data_temp)
-  #summary(adult.give_samp)
-  
-  full.give_samp <- lmer(perGiven ~ age + sex + rel + adult_samp + (1|camp), REML=FALSE, data = data_temp)
-  #summary(full.give_samp)
-  
-  # Store these results
-  res[i, "iteration"] <- i
-  res[i, "uni_adult_coef"] <- coef(summary(adult.give_samp))[2,1]
-  res[i, "uni_adult_se"] <- coef(summary(adult.give_samp))[2,2]
-  res[i, "uni_adult_lci"] <- confint(adult.give_samp)[4,1]
-  res[i, "uni_adult_uci"] <- confint(adult.give_samp)[4,2] 
-  res[i, "multi_adult_coef"] <- coef(summary(full.give_samp))[5,1]
-  res[i, "multi_adult_se"] <- coef(summary(full.give_samp))[5,2]
-  res[i, "multi_adult_lci"] <- confint(full.give_samp)[7,1] 
-  res[i, "multi_adult_uci"] <- confint(full.give_samp)[7,2] 
-  
+  df_list[[i]] <- data_temp
 }
 
-res
+#df_list
 
-# Save these results
-write_csv(res, file = "../Results/amountShared_adultVariation.csv", quote = FALSE)
+# Now run the combined brms model (lower the iterations and number of chains as well, to speed up processing) - This takes approx. 45 minutes to run.
 
+# Univariable model first
+adult.give_samp <- brm_multiple(perGiven ~ adult + (1 | camp), data = df_list, 
+                                warmup = 1000, iter = 2000, chains = 1, init = "random", seed = 561804)
+summary(adult.give_samp)
 
-## Analyse iterations by taking median and 95% credible intervals as measures of effect (and make a nice histogram of these iterations)
+# Now for multivariable model
+full.give_samp <- brm_multiple(perGiven ~ age + sex + rel + adult + (1 | camp), data = df_list, 
+                               warmup = 1000, iter = 2000, chains = 1, init = "random", seed = 868339)
+summary(full.give_samp)
 
-## Univariable analysis
+# Extract and save results
+table_varyAdult <- as.data.frame(cbind(c(rep(c("Adult coop"), 2)),
+                                            c("Univariable", "Multivariable"),
+                                            c(fixef(adult.give_samp)[2,1], fixef(full.give_samp)[5,1]),
+                                            c(fixef(adult.give_samp)[2,2], fixef(full.give_samp)[5,2]),
+                                            c(fixef(adult.give_samp)[2,3], fixef(full.give_samp)[5,3]),
+                                            c(fixef(adult.give_samp)[2,4], fixef(full.give_samp)[5,4])))
+colnames(table_varyAdult) <- c("Variable", "Model", "Coefficient", "SE", "LCI", "UCI")
 
-# Coefficient results
-median(res$uni_adult_coef)
-quantile(res$uni_adult_coef, c(0.025, 0.5, 0.975))
+# Convert estimates to numeric and round
+table_varyAdult <- table_varyAdult %>%
+  mutate(Coefficient = as.numeric(Coefficient)) %>%
+  mutate(Coefficient = round(Coefficient, 3)) %>%
+  mutate(SE = as.numeric(SE)) %>%
+  mutate(SE = round(SE, 3)) %>%
+  mutate(LCI = as.numeric(LCI)) %>%
+  mutate(LCI = round(LCI, 3)) %>%
+  mutate(UCI = as.numeric(UCI)) %>%
+  mutate(UCI = round(UCI, 3))
 
-# Lower CI results
-median(res$uni_adult_lci)
-quantile(res$uni_adult_lci, c(0.025, 0.5, 0.975))
+table_varyAdult
 
-# Upper CI results
-median(res$uni_adult_uci)
-quantile(res$uni_adult_uci, c(0.025, 0.5, 0.975))
-
-
-# Plot main coefficient results
-med <- quantile(res$uni_adult_coef, 0.5)
-lci <- quantile(res$uni_adult_coef, 0.025)
-uci <- quantile(res$uni_adult_coef, 0.975)
-
-hist(res$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.04), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-
-pdf("../Results/amountShared_univarAdultCoop.pdf", height = 6, width = 8)
-hist(res$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.04), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+write_csv(table_varyAdult, "../Results/table_varyAdult.csv", quote = FALSE)
 
 
-# Plot lower CI results
-med <- quantile(res$uni_adult_lci, 0.5)
-lci <- quantile(res$uni_adult_lci, 0.025)
-uci <- quantile(res$uni_adult_lci, 0.975)
 
-hist(res$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
+## As another sensitivity analysis, will run the same models, but using poisson and ordinal regression/cumulative link models, as the number of gifts given (0 to 5) isn't really continuous - CLMs predict the odds (or log-odds) of being in a higher outcome category (amount shared), for a one-unit increase in the predictor variable. This is quite similar to poisson regression, but as poisson regressions require count data there's no (theoretical) upper value. But in our example there is an upper value (5) in which case an ordinal model may also be appropriate. Also, the distribution of our data is skewed, as there is an over-abundance of '0's for a poisson distribution. However, if all models give qualitatively similar results, this bolsters our confidence in our conclusions, even if some model assumptions are violated.
 
-pdf("../Results/amountShared_univarAdultCoop_lci.pdf", height = 6, width = 8)
-hist(res$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+## Start with poisson distribution, because it (potentially) meets model assumptions better, which is used for count data (which is what we have here)
+
+# The mean and variances are roughly equivalent for  number of gifts, meeting one of the assumptions of a  poisson model - Although there is an excess of '0's, which does violate poisson assumptions.
+(mean(data$perGiven)); (var(data$perGiven))
+barplot(table(data$perGiven))
 
 
-## Multivariable analysis
+# Fit the individual and full models again
+age.give.p <- brm(perGiven ~ age + (1 | camp), data = data, family = "Poisson",
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 958990)
+summary(age.give.p)
 
-# Coefficient results
-median(res$multi_adult_coef)
-quantile(res$multi_adult_coef, c(0.025, 0.5, 0.975))
+sex.give.p <- brm(perGiven ~ sex + (1 | camp), data = data, family = "Poisson",
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 499444)
+summary(sex.give.p)
 
-# Lower CI results
-median(res$multi_adult_lci)
-quantile(res$multi_adult_lci, c(0.025, 0.5, 0.975))
+rel.give.p <- brm(perGiven ~ rel + (1 | camp), data = data, family = "Poisson",
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 667957)
+summary(rel.give.p)
 
-# Upper CI results
-median(res$multi_adult_uci)
-quantile(res$multi_adult_uci, c(0.025, 0.5, 0.975))
+adult.give.p <- brm(perGiven ~ adult + (1 | camp), data = data, family = "Poisson",
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 224373)
+summary(adult.give.p)
 
-
-# Plot main coefficient results
-med <- quantile(res$multi_adult_coef, 0.5)
-lci <- quantile(res$multi_adult_coef, 0.025)
-uci <- quantile(res$multi_adult_coef, 0.975)
-
-hist(res$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.018, 0.04), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-
-pdf("../Results/amountShared_multivarAdultCoop.pdf", height = 6, width = 8)
-hist(res$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.018, 0.04), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+# Now run a combined model which includes all predictors
+full.give.p <- brm(perGiven ~ age + sex + rel + adult + (1 | camp), data = data, family = "Poisson",
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 512385)
+summary(full.give.p)
 
 
-# Plot lower CI results
-med <- quantile(res$multi_adult_lci, 0.5)
-lci <- quantile(res$multi_adult_lci, 0.025)
-uci <- quantile(res$multi_adult_lci, 0.975)
+### Now for the ordinal regression model
+# Construct ordinal variable of number of resources given to others - Will also combine 4 and 5 gifts together, as low number of children gave 5
+data$perGiven_ord <- data$perGiven
+data$perGiven_ord[data$perGiven_ord == 5] <- 4
+data$perGiven_ord <- factor(data$perGiven_ord, ordered = T)
+table(data$perGiven_ord)
 
-hist(res$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(-0.002, 0.03), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
+# Fit the individual and full models again
+age.give.o <- brm(perGiven_ord ~ age + (1 | camp), data = data, family = "cumulative",
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 574224)
+summary(age.give.o)
 
-pdf("../Results/amountShared_multivarAdultCoop_lci.pdf", height = 6, width = 8)
-hist(res$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(-0.002, 0.03), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+sex.give.o <- brm(perGiven_ord ~ sex + (1 | camp), data = data, family = "cumulative",
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 648189)
+summary(sex.give.o)
+
+rel.give.o <- brm(perGiven_ord ~ rel + (1 | camp), data = data, family = "cumulative",
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 512656)
+summary(rel.give.o)
+
+adult.give.o <- brm(perGiven_ord ~ adult + (1 | camp), data = data, family = "cumulative",
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 453256)
+summary(adult.give.o)
+
+# Now run a combined model which includes all predictors
+full.give.o <- brm(perGiven_ord ~ age + sex + rel + adult + (1 | camp), data = data, family = "cumulative",
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 317428)
+summary(full.give.o)
 
 
+## Make a table to save all these results to
+model <- rep(c("Separate", "Full"), each = 4)
+var <- rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)
+
+tableS2 <- as.data.frame(cbind(model, var))
+tableS2
+
+# I'm sure there's a better way of combining results, but at least it works, and once this is set up I wont have to repeat it again if I re-run the models.
+tableS2$linear_coef[tableS2$model == "Separate" & var == "Age"] <- round(fixef(age.give)[2, 1], 3)
+tableS2$linear_se[tableS2$model == "Separate" & var == "Age"] <- round(fixef(age.give)[2, 2], 3)
+tableS2$linear_lci[tableS2$model == "Separate" & var == "Age"] <- round(fixef(age.give)[2, 3], 3)
+tableS2$linear_uci[tableS2$model == "Separate" & var == "Age"] <- round(fixef(age.give)[2, 4], 3)
+
+tableS2$linear_coef[tableS2$model == "Separate" & var == "Sex"] <- round(fixef(sex.give)[2, 1], 3)
+tableS2$linear_se[tableS2$model == "Separate" & var == "Sex"] <- round(fixef(sex.give)[2, 2], 3)
+tableS2$linear_lci[tableS2$model == "Separate" & var == "Sex"] <- round(fixef(sex.give)[2, 3], 3)
+tableS2$linear_uci[tableS2$model == "Separate" & var == "Sex"] <- round(fixef(sex.give)[2, 4], 3)
+
+tableS2$linear_coef[tableS2$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.give)[2, 1], 3)
+tableS2$linear_se[tableS2$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.give)[2, 2], 3)
+tableS2$linear_lci[tableS2$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.give)[2, 3], 3)
+tableS2$linear_uci[tableS2$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.give)[2, 4], 3)
+
+tableS2$linear_coef[tableS2$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.give)[2, 1], 3)
+tableS2$linear_se[tableS2$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.give)[2, 2], 3)
+tableS2$linear_lci[tableS2$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.give)[2, 3], 3)
+tableS2$linear_uci[tableS2$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.give)[2, 4], 3)
+
+tableS2$linear_coef[tableS2$model == "Full"] <- round(fixef(full.give)[2:5, 1], 3)
+tableS2$linear_se[tableS2$model == "Full"] <- round(fixef(full.give)[2:5, 2], 3)
+tableS2$linear_lci[tableS2$model == "Full"] <- round(fixef(full.give)[2:5, 3], 3)
+tableS2$linear_uci[tableS2$model == "Full"] <- round(fixef(full.give)[2:5, 4], 3)
+
+tableS2
+
+
+# Poisson results
+tableS2$poisson_coef[tableS2$model == "Separate" & var == "Age"] <- round(exp(fixef(age.give.p)[2, 1]), 3)
+tableS2$poisson_lci[tableS2$model == "Separate" & var == "Age"] <- round(exp(fixef(age.give.p)[2, 3]), 3)
+tableS2$poisson_uci[tableS2$model == "Separate" & var == "Age"] <- round(exp(fixef(age.give.p)[2, 4]), 3)
+
+tableS2$poisson_coef[tableS2$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.give.p)[2, 1]), 3)
+tableS2$poisson_lci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.give.p)[2, 3]), 3)
+tableS2$poisson_uci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.give.p)[2, 4]), 3)
+
+tableS2$poisson_coef[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.give.p)[2, 1]), 3)
+tableS2$poisson_lci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.give.p)[2, 3]), 3)
+tableS2$poisson_uci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.give.p)[2, 4]), 3)
+
+tableS2$poisson_coef[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.give.p)[2, 1]), 3)
+tableS2$poisson_lci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.give.p)[2, 3]), 3)
+tableS2$poisson_uci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.give.p)[2, 4]), 3)
+
+tableS2$poisson_coef[tableS2$model == "Full"] <- round(exp(fixef(full.give.p)[2:5, 1]), 3)
+tableS2$poisson_lci[tableS2$model == "Full"] <- round(exp(fixef(full.give.p)[2:5, 3]), 3)
+tableS2$poisson_uci[tableS2$model == "Full"] <- round(exp(fixef(full.give.p)[2:5, 4]), 3)
+
+tableS2
+
+
+# Ordinal regression results
+tableS2$ord_coef[tableS2$model == "Separate" & var == "Age"] <- round(exp(fixef(age.give.o)[5, 1]), 3)
+tableS2$ord_lci[tableS2$model == "Separate" & var == "Age"] <- round(exp(fixef(age.give.o)[5, 3]), 3)
+tableS2$ord_uci[tableS2$model == "Separate" & var == "Age"] <- round(exp(fixef(age.give.o)[5, 4]), 3)
+
+tableS2$ord_coef[tableS2$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.give.o)[5, 1]), 3)
+tableS2$ord_lci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.give.o)[5, 3]), 3)
+tableS2$ord_uci[tableS2$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.give.o)[5, 4]), 3)
+
+tableS2$ord_coef[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.give.o)[5, 1]), 3)
+tableS2$ord_lci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.give.o)[5, 3]), 3)
+tableS2$ord_uci[tableS2$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.give.o)[5, 4]), 3)
+
+tableS2$ord_coef[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.give.o)[5, 1]), 3)
+tableS2$ord_lci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.give.o)[5, 3]), 3)
+tableS2$ord_uci[tableS2$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.give.o)[5, 4]), 3)
+
+tableS2$ord_coef[tableS2$model == "Full"] <- round(exp(fixef(full.give.o)[5:8, 1]), 3)
+tableS2$ord_lci[tableS2$model == "Full"] <- round(exp(fixef(full.give.o)[5:8, 3]), 3)
+tableS2$ord_uci[tableS2$model == "Full"] <- round(exp(fixef(full.give.o)[5:8, 4]), 3)
+
+tableS2
+
+# Save this table
+write_csv(tableS2, file = "../Results/tableS2.csv", quote = FALSE)
+
+
+
+# Next, explore the age association to test whether association is quadratic. Will explore various models, including:
+# - Linear age term, camp-level random intercepts only
+# - Quadratic age term, camp-level random intercepts only
+# - Linear age term, camp-level random slopes and intercepts
+# - Quadratic age term, camp-level random slopes and intercepts
+
+data <- data %>%
+  mutate(age2 = age^2)
+
+## Linear age term, camp-level random intercepts only
+age.noSlopes <- brm(perGiven ~ age + (1 | camp), data = data, 
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 899291)
+summary(age.noSlopes)
+
+age.noSlopes <- add_criterion(age.noSlopes, "loo")
+
+
+## Quadratic age term, camp-level random intercepts only
+age2.noSlopes <- brm(perGiven ~ age + age2 + (1 | camp), data = data, 
+                     warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 748650)
+summary(age2.noSlopes)
+
+age2.noSlopes <- add_criterion(age2.noSlopes, "loo")
+
+
+## Linear age term, camp-level random slopes and intercepts
+age.slopes <- brm(perGiven ~ age + (age | camp), data = data, 
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 959263)
+summary(age.slopes)
+
+age.slopes <- add_criterion(age.slopes, "loo")
+
+# Check convergence over time and between chains
+age.slopes_trans <- ggs(age.slopes)
+
+# All chains converged and stable
+ggplot(filter(age.slopes_trans, Parameter %in% c("b_Intercept", "sigma", "sd_camp__Intercept", 
+                                                 "sd_camp__age", "b_age")),
+       aes(x   = Iteration,
+           y   = value, 
+           col = as.factor(Chain)))+
+  geom_line() +
+  geom_vline(xintercept = 1000)+
+  facet_grid(Parameter ~ . ,
+             scale  = 'free_y',
+             switch = 'y')+
+  labs(title = "Caterpillar Plots", 
+       col   = "Chains")
+
+
+## Quadratic age term, camp-level random slopes and intercepts
+age2.slopes <- brm(perGiven ~ age + age2 + (age + age2 | camp), data = data, 
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 959263)
+summary(age2.slopes)
+
+age2.slopes <- add_criterion(age2.slopes, "loo")
+
+# Check convergence over time and between chains
+age2.slopes_trans <- ggs(age2.slopes)
+
+# All chains converged and stable
+ggplot(filter(age2.slopes_trans, Parameter %in% c("b_Intercept", "sigma", "sd_camp__Intercept", 
+                                                  "sd_camp__age", "sd_camp__age2", "b_age", "b_age2")),
+       aes(x   = Iteration,
+           y   = value, 
+           col = as.factor(Chain)))+
+  geom_line() +
+  geom_vline(xintercept = 1000)+
+  facet_grid(Parameter ~ . ,
+             scale  = 'free_y',
+             switch = 'y')+
+  labs(title = "Caterpillar Plots", 
+       col   = "Chains")
+
+
+# Comparing the models, there is practically no difference in the loo model fit values, suggesting that random slopes and random intercepts is not a better fit than just random slopes (with age and age-squared RE model slightly worse), while age-squared term not improve model fit either. So the linear age term with camp-level random intercepts only appears to be the best fit to the data.
+loo(age.noSlopes) 
+loo(age2.noSlopes)
+loo(age.slopes)
+loo(age2.slopes)
+
+# Drop the age-squared variable
+data <- data %>%
+  select(-age2)
 
 
 
@@ -948,16 +823,18 @@ data_mum <- data %>%
   filter(!is.na(mother))
 
 # Only very weak evidence that mums amount shared is associated with child levels of cooperation
-mum_model <- lmer(perGiven ~ mother + (1|camp), REML=FALSE, data = data_mum)
+mum_model <- brm(perGiven ~ mother + (1|camp), data = data_mum,
+                 warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 417249)
 
 summary(mum_model)
-confint(mum_model)
 
 # Check consistency of results if use poisson and ordinal models
-mum_model.p <- glmer(perGiven ~ mother + (1|camp), family = "poisson", data = data_mum)
+mum_model.p <- brm(perGiven ~ mother + (1|camp), family = "poisson", data = data_mum,
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 481045)
 summary(mum_model.p)
 
-mum_model.o <- clmm(perGiven_ord ~ mother + (1|camp), data = data_mum)
+mum_model.o <- brm(perGiven_ord ~ mother + (1|camp), family = "cumulative", data = data_mum,
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 35525)
 summary(mum_model.o)
 
 
@@ -966,16 +843,18 @@ data_dad <- data %>%
   filter(!is.na(father))
 
 # No evidence that dads amount shared is associated with child levels of cooperation
-dad_model <- lmer(perGiven ~ father + (1|camp), REML=FALSE, data = data_dad)
+dad_model <- brm(perGiven ~ father + (1|camp), data = data_dad,
+                 warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 796844)
 
 summary(dad_model)
-confint(dad_model)
 
 # Check consistency of results if use poisson and ordinal models
-dad_model.p <- glmer(perGiven ~ father + (1|camp), family = "poisson", data = data_dad)
+dad_model.p <- brm(perGiven ~ father + (1|camp), family = "poisson", data = data_dad,
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 30129)
 summary(dad_model.p)
 
-dad_model.o <- clmm(perGiven_ord ~ father + (1|camp), data = data_dad)
+dad_model.o <- brm(perGiven_ord ~ father + (1|camp), family = "cumulative", data = data_dad,
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 596473)
 summary(dad_model.o)
 
 
@@ -993,48 +872,44 @@ summary(data_mumdad$parents)
 sample_n(data_mumdad, size = 20)
 
 # As with separate parents models, no evidence that parents amount shared is associated with child levels of cooperation
-parents_model <- lmer(perGiven ~ parents + (1|camp), REML=FALSE, data = data_mumdad)
+parents_model <- brm(perGiven ~ parents + (1|camp), data = data_mumdad,
+                     warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 261510)
 
 summary(parents_model)
-confint(parents_model)
 
 # Check consistency of results if use poisson and ordinal models
-parents_model.p <- glmer(perGiven ~ parents + (1|camp), family = "poisson", data = data_mumdad)
+parents_model.p <- brm(perGiven ~ parents + (1|camp), family = "poisson", data = data_mumdad,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 143349)
 summary(parents_model.p)
 
-parents_model.o <- clmm(perGiven_ord ~ parents + (1|camp), data = data_mumdad)
+parents_model.o <- brm(perGiven_ord ~ parents + (1|camp), family = "cumulative", data = data_mumdad,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 454760)
 summary(parents_model.o)
 
 
 ## Make a table to save these results to
 TableS3 <- data.frame(cbind(variable = c("Mother", "Father", "Parents"),
-                            linear_coef = c(coef(summary(mum_model))[2,1], coef(summary(dad_model))[2,1],
-                                            coef(summary(parents_model))[2,1]),
-                            linear_se = c(coef(summary(mum_model))[2,2], coef(summary(dad_model))[2,2],
-                                          coef(summary(parents_model))[2,2]),
-                            linear_lci = c(confint(mum_model)[4,1], confint(dad_model)[4,1], 
-                                           confint(parents_model)[4,1]),
-                            linear_uci = c(confint(mum_model)[4,2], confint(dad_model)[4,2], 
-                                           confint(parents_model)[4,2]),
-                            linear_p = c(coef(summary(mum_model))[2,5], coef(summary(dad_model))[2,5],
-                                            coef(summary(parents_model))[2,5]),
-                            pois_coef = c(exp(coef(summary(mum_model.p))[2,1]), exp(coef(summary(dad_model.p))[2,1]),
-                                       exp(coef(summary(parents_model.p))[2,1])),
-                            pois_lci = c(exp(confint(mum_model.p)[3,1]), exp(confint(dad_model.p)[3,1]), 
-                                         exp(confint(parents_model.p)[3,1])),
-                            pois_uci = c(exp(confint(mum_model.p)[3,2]), exp(confint(dad_model.p)[3,2]), 
-                                         exp(confint(parents_model.p)[3,2])),
-                            pois_p = c(coef(summary(mum_model.p))[2,4], coef(summary(dad_model.p))[2,4],
-                                          coef(summary(parents_model.p))[2,4]),
-                            ord_coef = c(exp(coef(summary(mum_model.o))[5,1]), exp(coef(summary(dad_model.o))[5,1]), 
-                                         exp(coef(summary(parents_model.o))[5,1])),
-                            ord_lci = c(exp(confint(mum_model.o)[5,1]), exp(confint(dad_model.o)[5,1]), 
-                                        exp(confint(parents_model.o)[5,1])),
-                            ord_uci = c(exp(confint(mum_model.o)[5,2]), exp(confint(dad_model.o)[5,2]), 
-                                        exp(confint(parents_model.o)[5,2])),
-                            ord_p = c(coef(summary(mum_model.o))[5,4], coef(summary(dad_model.o))[5,4], 
-                                         coef(summary(parents_model.o))[5,4])
-                            ))
+                                 linear_coef = c(fixef(mum_model)[2,1], fixef(dad_model)[2,1],
+                                                 fixef(parents_model)[2,1]),
+                                 linear_se = c(fixef(mum_model)[2,2], fixef(dad_model)[2,2],
+                                               fixef(parents_model)[2,2]),
+                                 linear_lci = c(fixef(mum_model)[2,3], fixef(dad_model)[2,3], 
+                                                fixef(parents_model)[2,3]),
+                                 linear_uci = c(fixef(mum_model)[2,4], fixef(dad_model)[2,4], 
+                                                fixef(parents_model)[2,4]),
+                                 pois_coef = c(exp(fixef(mum_model.p)[2,1]), exp(fixef(dad_model.p)[2,1]),
+                                               exp(fixef(parents_model.p)[2,1])),
+                                 pois_lci = c(exp(fixef(mum_model.p)[2,3]), exp(fixef(dad_model.p)[2,3]), 
+                                              exp(fixef(parents_model.p)[2,3])),
+                                 pois_uci = c(exp(fixef(mum_model.p)[2,4]), exp(fixef(dad_model.p)[2,4]), 
+                                              exp(fixef(parents_model.p)[2,4])),
+                                 ord_coef = c(exp(fixef(mum_model.o)[5,1]), exp(fixef(dad_model.o)[5,1]), 
+                                              exp(fixef(parents_model.o)[5,1])),
+                                 ord_lci = c(exp(fixef(mum_model.o)[5,3]), exp(fixef(dad_model.o)[5,3]), 
+                                             exp(fixef(parents_model.o)[5,3])),
+                                 ord_uci = c(exp(fixef(mum_model.o)[5,4]), exp(fixef(dad_model.o)[5,4]), 
+                                             exp(fixef(parents_model.o)[5,4]))
+))
 TableS3
 
 # Convert estimates to numeric and round
@@ -1047,24 +922,18 @@ TableS3 <- TableS3 %>%
   mutate(linear_lci = round(linear_lci, 3)) %>%
   mutate(linear_uci = as.numeric(linear_uci)) %>%
   mutate(linear_uci = round(linear_uci, 3)) %>%
-  mutate(linear_p = as.numeric(linear_p)) %>%
-  mutate(linear_p = round(linear_p, 3)) %>%
   mutate(pois_coef = as.numeric(pois_coef)) %>%
   mutate(pois_coef = round(pois_coef, 3)) %>%
   mutate(pois_lci = as.numeric(pois_lci)) %>%
   mutate(pois_lci = round(pois_lci, 3)) %>%
   mutate(pois_uci = as.numeric(pois_uci)) %>%
   mutate(pois_uci = round(pois_uci, 3)) %>%
-  mutate(pois_p = as.numeric(pois_p)) %>%
-  mutate(pois_p = round(pois_p, 3)) %>%
   mutate(ord_coef = as.numeric(ord_coef)) %>%
   mutate(ord_coef = round(ord_coef, 3)) %>%
   mutate(ord_lci = as.numeric(ord_lci)) %>%
   mutate(ord_lci = round(ord_lci, 3)) %>%
   mutate(ord_uci = as.numeric(ord_uci)) %>%
-  mutate(ord_uci = round(ord_uci, 3)) %>%
-  mutate(ord_p = as.numeric(ord_p)) %>%
-  mutate(ord_p = round(ord_p, 3))
+  mutate(ord_uci = round(ord_uci, 3))
 
 TableS3
 
@@ -1075,39 +944,27 @@ write_csv(TableS3, "../Results/tableS3.csv", quote = FALSE)
 ########################################################################################
 ## Now run models of number of unique recipients
 
-# As with overall levels of cooperation above, first create an age squared variable and make sure age association is not quadratic (i.e., inclusion of age-squared term does not improve model fit relative to linear age only model) - Age squared not improve model fit, so not include in final models
-data <- data %>%
-  mutate(age2 = age^2)
-
-age2.numRec <- lmer(numRecipients ~ age + age2 + (1|camp), REML=FALSE, data = data)
-summary(age2.numRec)
-
-# Ideally would also explore whether random-slopes by age/camp also improves model fit, but are issues with model fit/convergence so cannot explore in depth (this could be due to small sample sizes, or due to little/no variation in the random slopes; if the former, then perhaps the model is mispecified and age slopes do differ by camp, but if the latter then the random-intercept only model may be appropriate). Will proceed just using random-intercepts with age as a linear predictor.
-numRec.slopes <- lmer(numRecipients ~ age + (age|camp), REML = FALSE, data = data)
-summary(numRec.slopes)
-
-data <- data %>%
-  select(-age2)
-
-
-# Now, run a separate model for each predictor model
-age.numRec <- lmer(numRecipients ~ age + (1|camp), REML=FALSE, data = data)
+# First, run a separate model for each predictor model
+age.numRec <- brm(numRecipients ~ age + (1 | camp), data = data, 
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 984092)
 summary(age.numRec)
 
-sex.numRec <- lmer(numRecipients ~ sex + (1|camp), REML=FALSE, data = data)
+sex.numRec <- brm(numRecipients ~ sex + (1 | camp), data = data, 
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 97184)
 summary(sex.numRec)
 
-rel.numRec <- lmer(numRecipients ~ rel + (1|camp), REML=FALSE, data = data)
+rel.numRec <- brm(numRecipients ~ rel + (1 | camp), data = data, 
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 893579)
 summary(rel.numRec)
 
-adult.numRec <- lmer(numRecipients ~ adult + (1|camp), REML=FALSE, data = data)
+adult.numRec <- brm(numRecipients ~ adult + (1 | camp), data = data, 
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 913480)
 summary(adult.numRec)
 
 # Now run a combined model which includes all predictors (as assume are relatively independent, results of full model should be similar to individual models - and they are)
-full.numRec <- lmer(numRecipients ~ age + sex + rel + adult + (1|camp), REML=FALSE, data = data)
+full.numRec <- brm(numRecipients ~ age + sex + rel + adult + (1 | camp), data = data, 
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 431963)
 summary(full.numRec)
-
-confint(full.numRec)
 
 
 # First check some model assumptions (of normality) - Residuals from the global model look relatively normal - And save these images
@@ -1115,11 +972,11 @@ pdf("../Results/FigS6_Residuals_FullNumRecipModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
-hist(residuals(full.numRec), main = NULL, xlab = "Residuals", ylim = c(0, 40))
-text(-2.25, 35, "A", cex = 2.5)
+hist(residuals(full.numRec)[, "Estimate"], main = NULL, xlab = "Residuals")
+text(-2, 33, "A", cex = 2.5)
 
-qqnorm(residuals(full.numRec), main = NULL)
-qqline(residuals(full.numRec))
+qqnorm(residuals(full.numRec)[, "Estimate"], main = NULL)
+qqline(residuals(full.numRec)[, "Estimate"])
 text(-2.5, 2.5, "B", cex = 2.5)
 
 dev.off()
@@ -1130,19 +987,26 @@ par(mfrow = c(1, 1))
 # Now test for heteroskedascity - It's a bit odd, but I don't think it's 'too' bad...(mainly looks weird because the values are only 0 to 5)
 pdf("../Results/FigS7_Heteroskedasticity_FullNumRecipModel.pdf", width = 8, height = 6)
 
-plot(residuals(full.numRec) ~ fitted.values(full.numRec), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(full.numRec)[, "Estimate"] ~ fitted.values(full.numRec)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 
 dev.off()
 
 
 
 # Now plot the predicted values for age and number of respondents
-data$fit_resp <- predict(full.numRec)
+data$fit_resp <- fitted(full.numRec)[, "Estimate"]
 
-(ageResp_fit <- ggplot(data = data,
-                    aes(x = age, y = fit_resp)) +
-    geom_smooth(method = "loess", colour = "black") +
-    geom_point() +
+newdata_resp <- data.frame(age = 3:18, sex = mean(data$sex), rel = mean(data$rel), adult = mean(tableS1$adult))
+newdata_resp$fit <- fitted(full.numRec, newdata = newdata_resp, re_formula = NA)[, "Estimate"]
+newdata_resp$fit_lci <- fitted(full.numRec, newdata = newdata_resp, re_formula = NA)[, "Q2.5"]
+newdata_resp$fit_uci <- fitted(full.numRec, newdata = newdata_resp, re_formula = NA)[, "Q97.5"]
+head(newdata_resp)
+
+(ageResp_fit <- ggplot(data = NULL) +
+    geom_ribbon(data = newdata_resp, aes(x = age, ymin = fit_lci, ymax = fit_uci), fill = "gray90") +
+    geom_point(data = data, aes(x = age, y = fit_resp)) +
+    geom_line(data = newdata_resp, aes(x = age, y = fit), colour = "black", size = 1) +
     ylab("Predicted number of unique recipients") +
     xlab("Child age (years)") +
     theme_bw() +
@@ -1158,231 +1022,27 @@ data$fit_resp <- predict(full.numRec)
 # Arrange amount shared and number of recipients fitted value plots together and save as pdf file
 pdf("../Results/FigS5_AgeCoop.pdf", width = 8, height = 12)
 
-grid.arrange(age_fit,ageResp_fit, ncol = 1)
+grid.arrange(age_fit, ageResp_fit, ncol = 1)
 
 dev.off()
 
 
-## As a further check, will also run the above analyses using poisson regression, which is used for count 
-## data (which is what we have here)
 
-# The mean and variances are roughly equivalent for number of recipients, meeting one of the assumptions of a
-# poisson model (although there is an excess of '0's, which does violate model assumptions)
-(mean(data$numRecipients)); (var(data$numRecipients))
-barplot(table(data$numRecipients))
-
-# Fit the individual and full models again
-age.numRec.p <- glmer(numRecipients ~ age + (1|camp), family = "poisson", data = data)
-summary(age.numRec.p)
-
-sex.numRec.p <- glmer(numRecipients ~ sex + (1|camp), family = "poisson", data = data)
-summary(sex.numRec.p)
-
-rel.numRec.p <- glmer(numRecipients ~ rel + (1|camp), family = "poisson", data = data)
-summary(rel.numRec.p)
-
-adult.numRec.p <- glmer(numRecipients ~ adult + (1|camp), family = "poisson", data = data)
-summary(adult.numRec.p)
-
-# Now run a combined model which includes all predictors
-full.numRec.p <- glmer(numRecipients ~ age + sex + rel + adult + (1|camp), family = "poisson", data = data)
-summary(full.numRec.p)
-
-
-### Now for the ordinal regression model
-# Construct ordinal variable of number of unique recipients - As above, will combine 4 and 5 recipients together, as low number of children gave to 5 others
-data$numRec_ord <- data$numRecipients
-data$numRec_ord[data$numRec_ord == 5] <- 4
-data$numRec_ord <- factor(data$numRec_ord, ordered = T)
-table(data$numRec_ord)
-
-# Fit the individual and full models again
-age.numRec.o <- clmm(numRec_ord ~ age + (1|camp), data = data)
-summary(age.numRec.o)
-
-sex.numRec.o <- clmm(numRec_ord ~ sex + (1|camp), data = data)
-summary(sex.numRec.o)
-
-rel.numRec.o <- clmm(numRec_ord ~ rel + (1|camp), data = data)
-summary(rel.numRec.o)
-
-adult.numRec.o <- clmm(numRec_ord ~ adult + (1|camp), data = data)
-summary(adult.numRec.o)
-
-# Now run a combined model which includes all predictors
-full.numRec.o <- clmm(numRec_ord ~ age + sex + rel + adult + (1|camp), data = data)
-summary(full.numRec.o)
-
-
-## Make a table to save all these results to
-model <- rep(c("Separate", "Full"), each = 4)
-var <- rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)
-
-TableS4 <- as.data.frame(cbind(model, var))
-TableS4
-
-# I'm sure there's a better way of combining results, but at least once this is set up I wont have to repeat it again if I re-run the models...
-TableS4$linear_coef[TableS4$model == "Separate" & var == "Age"] <- round(coef(summary(age.numRec))[2, 1], 3)
-TableS4$linear_se[TableS4$model == "Separate" & var == "Age"] <- round(coef(summary(age.numRec))[2, 2], 3)
-TableS4$linear_lci[TableS4$model == "Separate" & var == "Age"] <- round(confint(age.numRec)[4, 1], 3)
-TableS4$linear_uci[TableS4$model == "Separate" & var == "Age"] <- round(confint(age.numRec)[4, 2], 3)
-TableS4$linear_p[TableS4$model == "Separate" & var == "Age"] <- round(coef(summary(age.numRec))[2, 5], 3)
-
-TableS4$linear_coef[TableS4$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.numRec))[2, 1], 3)
-TableS4$linear_se[TableS4$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.numRec))[2, 2], 3)
-TableS4$linear_lci[TableS4$model == "Separate" & var == "Sex"] <- round(confint(sex.numRec)[4, 1], 3)
-TableS4$linear_uci[TableS4$model == "Separate" & var == "Sex"] <- round(confint(sex.numRec)[4, 2], 3)
-TableS4$linear_p[TableS4$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.numRec))[2, 5], 3)
-
-TableS4$linear_coef[TableS4$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.numRec))[2, 1], 3)
-TableS4$linear_se[TableS4$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.numRec))[2, 2], 3)
-TableS4$linear_lci[TableS4$model == "Separate" & var == "Relatedness"] <- round(confint(rel.numRec)[4, 1], 3)
-TableS4$linear_uci[TableS4$model == "Separate" & var == "Relatedness"] <- round(confint(rel.numRec)[4, 2], 3)
-TableS4$linear_p[TableS4$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.numRec))[2, 5], 3)
-
-TableS4$linear_coef[TableS4$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.numRec))[2, 1], 3)
-TableS4$linear_se[TableS4$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.numRec))[2, 2], 3)
-TableS4$linear_lci[TableS4$model == "Separate" & var == "Adult coop"] <- round(confint(adult.numRec)[4, 1], 3)
-TableS4$linear_uci[TableS4$model == "Separate" & var == "Adult coop"] <- round(confint(adult.numRec)[4, 2], 3)
-TableS4$linear_p[TableS4$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.numRec))[2, 5], 3)
-
-TableS4$linear_coef[TableS4$model == "Full"] <- round(coef(summary(full.numRec))[2:5, 1], 3)
-TableS4$linear_se[TableS4$model == "Full"] <- round(coef(summary(full.numRec))[2:5, 2], 3)
-TableS4$linear_lci[TableS4$model == "Full"] <- round(confint(full.numRec)[4:7, 1], 3)
-TableS4$linear_uci[TableS4$model == "Full"] <- round(confint(full.numRec)[4:7, 2], 3)
-TableS4$linear_p[TableS4$model == "Full"] <- round(coef(summary(full.numRec))[2:5, 5], 3)
-
-TableS4
-
-
-# Poisson results
-TableS4$poisson_coef[TableS4$model == "Separate" & var == "Age"] <- round(exp(coef(summary(age.numRec.p))[2, 1]), 3)
-TableS4$poisson_lci[TableS4$model == "Separate" & var == "Age"] <- round(exp(confint(age.numRec.p)[3, 1]), 3)
-TableS4$poisson_uci[TableS4$model == "Separate" & var == "Age"] <- round(exp(confint(age.numRec.p)[3, 2]), 3)
-TableS4$poisson_p[TableS4$model == "Separate" & var == "Age"] <- round(coef(summary(age.numRec.p))[2, 4], 3)
-
-TableS4$poisson_coef[TableS4$model == "Separate" & var == "Sex"] <- round(exp(coef(summary(sex.numRec.p))[2, 1]), 3)
-TableS4$poisson_lci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.numRec.p)[3, 1]), 3)
-TableS4$poisson_uci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.numRec.p)[3, 2]), 3)
-TableS4$poisson_p[TableS4$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.numRec.p))[2, 4], 3)
-
-TableS4$poisson_coef[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(coef(summary(rel.numRec.p))[2, 1]), 3)
-TableS4$poisson_lci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.numRec.p)[3, 1]), 3)
-TableS4$poisson_uci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.numRec.p)[3, 2]), 3)
-TableS4$poisson_p[TableS4$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.numRec.p))[2, 4], 3)
-
-TableS4$poisson_coef[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(coef(summary(adult.numRec.p))[2, 1]), 3)
-TableS4$poisson_lci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.numRec.p)[3, 1]), 3)
-TableS4$poisson_uci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.numRec.p)[3, 2]), 3)
-TableS4$poisson_p[TableS4$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.numRec.p))[2, 4], 3)
-
-TableS4$poisson_coef[TableS4$model == "Full"] <- round(exp(coef(summary(full.numRec.p))[2:5, 1]), 3)
-TableS4$poisson_lci[TableS4$model == "Full"] <- round(exp(confint(full.numRec.p)[3:6, 1]), 3)
-TableS4$poisson_uci[TableS4$model == "Full"] <- round(exp(confint(full.numRec.p)[3:6, 2]), 3)
-TableS4$poisson_p[TableS4$model == "Full"] <- round(coef(summary(full.numRec.p))[2:5, 4], 3)
-
-TableS4
-
-
-# Ordinal regression results
-TableS4$ord_coef[TableS4$model == "Separate" & var == "Age"] <- round(exp(coef(summary(age.numRec.o))[5, 1]), 3)
-TableS4$ord_lci[TableS4$model == "Separate" & var == "Age"] <- round(exp(confint(age.numRec.o)[5, 1]), 3)
-TableS4$ord_uci[TableS4$model == "Separate" & var == "Age"] <- round(exp(confint(age.numRec.o)[5, 2]), 3)
-TableS4$ord_p[TableS4$model == "Separate" & var == "Age"] <- round(coef(summary(age.numRec.o))[5, 4], 3)
-
-TableS4$ord_coef[TableS4$model == "Separate" & var == "Sex"] <- round(exp(coef(summary(sex.numRec.o))[5, 1]), 3)
-TableS4$ord_lci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.numRec.o)[5, 1]), 3)
-TableS4$ord_uci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(confint(sex.numRec.o)[5, 2]), 3)
-TableS4$ord_p[TableS4$model == "Separate" & var == "Sex"] <- round(coef(summary(sex.numRec.o))[5, 4], 3)
-
-TableS4$ord_coef[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(coef(summary(rel.numRec.o))[5, 1]), 3)
-TableS4$ord_lci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.numRec.o)[5, 1]), 3)
-TableS4$ord_uci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(confint(rel.numRec.o)[5, 2]), 3)
-TableS4$ord_p[TableS4$model == "Separate" & var == "Relatedness"] <- round(coef(summary(rel.numRec.o))[5, 4], 3)
-
-TableS4$ord_coef[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(coef(summary(adult.numRec.o))[5, 1]), 3)
-TableS4$ord_lci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.numRec.o)[5, 1]), 3)
-TableS4$ord_uci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(confint(adult.numRec.o)[5, 2]), 3)
-TableS4$ord_p[TableS4$model == "Separate" & var == "Adult coop"] <- round(coef(summary(adult.numRec.o))[5, 4], 3)
-
-TableS4$ord_coef[TableS4$model == "Full"] <- round(exp(coef(summary(full.numRec.o))[5:8, 1]), 3)
-TableS4$ord_lci[TableS4$model == "Full"] <- round(exp(confint(full.numRec.o)[5:8, 1]), 3)
-TableS4$ord_uci[TableS4$model == "Full"] <- round(exp(confint(full.numRec.o)[5:8, 2]), 3)
-TableS4$ord_p[TableS4$model == "Full"] <- round(coef(summary(full.numRec.o))[5:8, 4], 3)
-
-TableS4
-
-# Save this table
-write_csv(TableS4, file = "../Results/tableS4.csv", quote = FALSE)
-
-
-
-### Interaction test for adult coop by age (as can't use random-slopes/random-effects) - E.g., to see whether there's an association between age and number of unique recipient in camps where adults were more cooperative, but not if adults were less cooperative.
-
-# Linear model
-full.numRec_int <- lmer(numRecipients ~ age + sex + rel + adult + age:adult + (1|camp), REML=FALSE, data = data)
-summary(full.numRec_int)
-
-# Poisson model
-full.numRec.p_int <- glmer(numRecipients ~ age + sex + rel + adult + age:adult + (1|camp), family = "poisson", data = data)
-summary(full.numRec.p_int)
-
-# Ordinal model
-full.numRec.o_int <- clmm(numRec_ord ~ age + sex + rel + adult + age:adult + (1|camp), data = data)
-summary(full.numRec.o_int)
-
-
-## Some convergence issues for the poisson and ordinal models, so will use the age and adult cooperation z-scores (which seems to resolve these problems)
-
-# Linear model
-full.numRec_int_z <- lmer(numRecipients ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), REML=FALSE, data = data)
-summary(full.numRec_int_z)
-confint(full.numRec_int_z)
-
-# Poisson model
-full.numRec.p_int_z <- glmer(numRecipients ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), family = "poisson", data = data)
-summary(full.numRec.p_int_z)
-exp(coef(summary(full.numRec.p_int_z)))
-exp(confint(full.numRec.p_int_z))
-
-# Ordinal model
-full.numRec.o_int_z <- clmm(numRec_ord ~ age_z + sex + rel + adult_z + age_z:adult_z + (1|camp), data = data)
-summary(full.numRec.o_int_z)
-exp(coef(summary(full.numRec.o_int_z)))
-exp(confint(full.numRec.o_int_z))
-
-## Formal likelihood ratio tests of inclusion of interaction term
-anova(full.numRec, full.numRec_int_z)
-anova(full.numRec.p, full.numRec.p_int_z)
-anova(full.numRec.o, full.numRec.o_int_z)
-
-
-### Further suggestion by reviewer for taking variation in adult levels of cooperation into consideration.
+### Conducting sensitivity analysis to take variation in adult levels of cooperation into consideration.
 
 ## Our approach is as follows:
-# 1.	Sample from a normal distibution using the mean and standard error of adult cooperation from each camp, and use this as the average adult level of cooperation for said camp.
-# 2.	Run the models (both univariable and multivariable), and store the parameter estimates.
-# 3.	Iterate this process 1,000 times, sampling different adult levels of cooperation for each camp from the prior distribution each time.
-# 4.	Present the median and 95% credible intervals of these results.
+# 1.	Sample from a normal distribution using the mean and standard error of adult cooperation from each camp, and use this as the average adult level of cooperation for said camp and store these 1,000 datasets.
+# 2.	Run the models (both univariable and multivariable) using the command 'brm_multiple' which runs the model in the 1,000 datasets and combines the results together.
 
 
-## Set seed and embed script in a loop 1,000 times, run univariable and multivariable models for adult cooperation, and store estimates in a table.
-set.seed(45678)
-iter <- 1000
+## First, create 1,000 datasets with different adult cooperation values
+set.seed(172486)
+n <- 1000
 
-# Data frame to collect parameters of interest
-res_numRec <- as.data.frame(array(dim = c(iter, 9)))
-colnames(res_numRec) <- c("iteration", "uni_adult_coef", "uni_adult_se", "uni_adult_lci", "uni_adult_uci",
-                   "multi_adult_coef", "multi_adult_se", "multi_adult_lci", "multi_adult_uci")
-#head(res_numRec)
+df_list <- list() # Initialise an empty list to add dataframes to
 
-# Loop over each iteration (takes approx half an hour on a standard laptop for 1,000 iterations)
-for (i in 1:iter) {
-  
-  # Print interation
-  print(paste("Processing iteration", i))
-  
-  # Create the dataset and add adult cooperation value from prior distribution
+# Loop over the number of lists to create, and vary adult levels of cooperation in each
+for (i in 1:n) {
   data_temp <- data
   data_temp$adult_samp <- NA
   data_temp$adult_samp[data_temp$camp == "P1"] <- rnorm(n = 1, mean = 59.2, sd = 3.73)
@@ -1400,146 +1060,248 @@ for (i in 1:iter) {
   data_temp$adult_samp[data_temp$camp == "M2"] <- rnorm(n = 1, mean = 49.3, sd = 7.81)
   data_temp$adult_samp[data_temp$camp == "M3"] <- rnorm(n = 1, mean = 60.7, sd = 9.64)
   
-  # Code any values < 0 as 0, and > 100 as 100 (as these values are impossible)
-  data_temp$adult_samp[data_temp$adult_samp < 0] <- 0
-  data_temp$adult_samp[data_temp$adult_samp > 100] <- 100
-  
-  # Run the univariable and multivariable models and store estimates
-  adult.numRec_samp <- lmer(numRecipients ~ adult_samp + (1|camp), REML=FALSE, data = data_temp)
-  #summary(adult.numRec_samp)
-  
-  full.numRec_samp <- lmer(numRecipients ~ age + sex + rel + adult_samp + (1|camp), REML=FALSE, data = data_temp)
-  #summary(full.numRec_samp)
-  
-  # Store these results
-  res_numRec[i, "iteration"] <- i
-  res_numRec[i, "uni_adult_coef"] <- coef(summary(adult.numRec_samp))[2,1]
-  res_numRec[i, "uni_adult_se"] <- coef(summary(adult.numRec_samp))[2,2]
-  res_numRec[i, "uni_adult_lci"] <- confint(adult.numRec_samp)[4,1]
-  res_numRec[i, "uni_adult_uci"] <- confint(adult.numRec_samp)[4,2] 
-  res_numRec[i, "multi_adult_coef"] <- coef(summary(full.numRec_samp))[5,1]
-  res_numRec[i, "multi_adult_se"] <- coef(summary(full.numRec_samp))[5,2]
-  res_numRec[i, "multi_adult_lci"] <- confint(full.numRec_samp)[7,1] 
-  res_numRec[i, "multi_adult_uci"] <- confint(full.numRec_samp)[7,2] 
-  
+  df_list[[i]] <- data_temp
 }
 
-res_numRec
+#df_list
 
-# Save these results
-write_csv(res_numRec, file = "../Results/numberRecipients_adultVariation.csv", quote = FALSE)
+# Now run the combined brms model (lower the iterations and number of chains as well, to speed up processing) - This takes approx. 45 minutes to run.
 
+# Univariable model first
+adult.numRec_samp <- brm_multiple(numRecipients ~ adult + (1 | camp), data = df_list, 
+                                  warmup = 1000, iter = 2000, chains = 1, init = "random", seed = 818414)
+summary(adult.numRec_samp)
 
-## Analyse iterations by taking median and 95% credible intervals as measures of effect (and make a nice histogram of these iterations)
+# Now for multivariable model
+full.numRec_samp <- brm_multiple(numRecipients ~ age + sex + rel + adult + (1 | camp), data = df_list, 
+                                 warmup = 1000, iter = 2000, chains = 1, init = "random", seed = 302509)
+summary(full.numRec_samp)
 
-## Univariable analysis
+# Extract and save results
+table_varyAdult_numRec <- as.data.frame(cbind(c(rep(c("Adult coop"), 2)),
+                                                   c("Univariable", "Multivariable"),
+                                                   c(fixef(adult.numRec_samp)[2,1], fixef(full.numRec_samp)[5,1]),
+                                                   c(fixef(adult.numRec_samp)[2,2], fixef(full.numRec_samp)[5,2]),
+                                                   c(fixef(adult.numRec_samp)[2,3], fixef(full.numRec_samp)[5,3]),
+                                                   c(fixef(adult.numRec_samp)[2,4], fixef(full.numRec_samp)[5,4])))
+colnames(table_varyAdult_numRec) <- c("Variable", "Model", "Coefficient", "SE", "LCI", "UCI")
 
-# Coefficient results
-median(res_numRec$uni_adult_coef)
-quantile(res_numRec$uni_adult_coef, c(0.025, 0.5, 0.975))
+# Convert estimates to numeric and round
+table_varyAdult_numRec <- table_varyAdult_numRec %>%
+  mutate(Coefficient = as.numeric(Coefficient)) %>%
+  mutate(Coefficient = round(Coefficient, 3)) %>%
+  mutate(SE = as.numeric(SE)) %>%
+  mutate(SE = round(SE, 3)) %>%
+  mutate(LCI = as.numeric(LCI)) %>%
+  mutate(LCI = round(LCI, 3)) %>%
+  mutate(UCI = as.numeric(UCI)) %>%
+  mutate(UCI = round(UCI, 3))
 
-# Lower CI results
-median(res_numRec$uni_adult_lci)
-quantile(res_numRec$uni_adult_lci, c(0.025, 0.5, 0.975))
+table_varyAdult_numRec
 
-# Upper CI results
-median(res_numRec$uni_adult_uci)
-quantile(res_numRec$uni_adult_uci, c(0.025, 0.5, 0.975))
-
-
-# Plot main coefficient results
-med <- quantile(res_numRec$uni_adult_coef, 0.5)
-lci <- quantile(res_numRec$uni_adult_coef, 0.025)
-uci <- quantile(res_numRec$uni_adult_coef, 0.975)
-
-hist(res_numRec$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-
-pdf("../Results/numberRecipients_univarAdultCoop.pdf", height = 6, width = 8)
-hist(res_numRec$uni_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+write_csv(table_varyAdult_numRec, "../Results/table_varyAdult_numRec.csv", quote = FALSE)
 
 
-# Plot lower CI results
-med <- quantile(res_numRec$uni_adult_lci, 0.5)
-lci <- quantile(res_numRec$uni_adult_lci, 0.025)
-uci <- quantile(res_numRec$uni_adult_lci, 0.975)
+## As a further check, will also run the above analyses using poisson regression, which is used for count 
+## data (which is what we have here)
 
-hist(res_numRec$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.003, 0.032), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
+# The mean and variances are roughly equivalent for number of recipients, meeting one of the assumptions of a
+# poisson model (although there is an excess of '0's, which does violate model assumptions)
+(mean(data$numRecipients)); (var(data$numRecipients))
+barplot(table(data$numRecipients))
 
-pdf("../Results/numberRecipients_univarAdultCoop_lci.pdf", height = 6, width = 8)
-hist(res_numRec$uni_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.003, 0.032), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+# Fit the individual and full models again
+age.numRec.p <- brm(numRecipients ~ age + (1|camp), family = "poisson", data = data,
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 916940)
+summary(age.numRec.p)
 
+sex.numRec.p <- brm(numRecipients ~ sex + (1|camp), family = "poisson", data = data,
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 425745)
+summary(sex.numRec.p)
 
-## Multivariable analysis
+rel.numRec.p <- brm(numRecipients ~ rel + (1|camp), family = "poisson", data = data,
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 455104)
+summary(rel.numRec.p)
 
-# Coefficient results
-median(res_numRec$multi_adult_coef)
-quantile(res_numRec$multi_adult_coef, c(0.025, 0.5, 0.975))
+adult.numRec.p <- brm(numRecipients ~ adult + (1|camp), family = "poisson", data = data,
+                      warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 581703)
+summary(adult.numRec.p)
 
-# Lower CI results
-median(res_numRec$multi_adult_lci)
-quantile(res_numRec$multi_adult_lci, c(0.025, 0.5, 0.975))
-
-# Upper CI results
-median(res_numRec$multi_adult_uci)
-quantile(res_numRec$multi_adult_uci, c(0.025, 0.5, 0.975))
+# Now run a combined model which includes all predictors
+full.numRec.p <- brm(numRecipients ~ age + sex + rel + adult + (1|camp), family = "poisson", data = data,
+                     warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 259190)
+summary(full.numRec.p)
 
 
-# Plot main coefficient results
-med <- quantile(res_numRec$multi_adult_coef, 0.5)
-lci <- quantile(res_numRec$multi_adult_coef, 0.025)
-uci <- quantile(res_numRec$multi_adult_coef, 0.975)
+### Now for the ordinal regression model
+# Construct ordinal variable of number of unique recipients - As above, will combine 4 and 5 recipients together, as low number of children gave to 5 others
+data$numRec_ord <- data$numRecipients
+data$numRec_ord[data$numRec_ord == 5] <- 4
+data$numRec_ord <- factor(data$numRec_ord, ordered = T)
+table(data$numRec_ord)
 
-hist(res_numRec$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
+# Fit the individual and full models again
+age.numRec.o <- brm(numRec_ord ~ age + (1|camp), data = data, family = "cumulative",
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 258918)
+summary(age.numRec.o)
 
-pdf("../Results/numberRecipients_multivarAdultCoop.pdf", height = 6, width = 8)
-hist(res_numRec$multi_adult_coef, col = "lightblue", xlab = "Adult cooperation coefficient", xlim = c(0.02, 0.045), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+sex.numRec.o <- brm(numRec_ord ~ sex + (1|camp), data = data, family = "cumulative",
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 399534)
+summary(sex.numRec.o)
+
+rel.numRec.o <- brm(numRec_ord ~ rel + (1|camp), data = data, family = "cumulative",
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 958561)
+summary(rel.numRec.o)
+
+adult.numRec.o <- brm(numRec_ord ~ adult + (1|camp), data = data, family = "cumulative",
+                      warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 148804)
+summary(adult.numRec.o)
+
+# Now run a combined model which includes all predictors
+full.numRec.o <- brm(numRec_ord ~ age + sex + rel + adult + (1|camp), data = data, family = "cumulative",
+                     warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 263217)
+summary(full.numRec.o)
 
 
-# Plot lower CI results
-med <- quantile(res_numRec$multi_adult_lci, 0.5)
-lci <- quantile(res_numRec$multi_adult_lci, 0.025)
-uci <- quantile(res_numRec$multi_adult_lci, 0.975)
+## Make a table to save all these results to
+model <- rep(c("Separate", "Full"), each = 4)
+var <- rep(c("Age", "Sex", "Relatedness", "Adult coop"), 2)
 
-hist(res_numRec$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
+TableS4 <- as.data.frame(cbind(model, var))
+TableS4
 
-pdf("../Results/numberRecipients_multivarAdultCoop_lci.pdf", height = 6, width = 8)
-hist(res_numRec$multi_adult_lci, col = "lightblue", xlab = "Adult cooperation lower CI", xlim = c(0.00, 0.03), 
-     breaks = 20,  main = paste0("Median = ", round(med, 3), " (95% CI = ", round(lci, 3), " to ", round(uci, 3), ")"))
-abline(v = med, lty = 3, lwd = 5, col = "red")
-abline(v = lci, lty = 3, lwd = 3, col = "blue")
-abline(v = uci, lty = 3, lwd = 3, col = "blue")
-dev.off()
+# I'm sure there's a better way of combining results, but at least once this is set up I wont have to repeat it again if I re-run the models...
+TableS4$linear_coef[TableS4$model == "Separate" & var == "Age"] <- round(fixef(age.numRec)[2, 1], 3)
+TableS4$linear_se[TableS4$model == "Separate" & var == "Age"] <- round(fixef(age.numRec)[2, 2], 3)
+TableS4$linear_lci[TableS4$model == "Separate" & var == "Age"] <- round(fixef(age.numRec)[2, 3], 3)
+TableS4$linear_uci[TableS4$model == "Separate" & var == "Age"] <- round(fixef(age.numRec)[2, 4], 3)
+
+TableS4$linear_coef[TableS4$model == "Separate" & var == "Sex"] <- round(fixef(sex.numRec)[2, 1], 3)
+TableS4$linear_se[TableS4$model == "Separate" & var == "Sex"] <- round(fixef(sex.numRec)[2, 2], 3)
+TableS4$linear_lci[TableS4$model == "Separate" & var == "Sex"] <- round(fixef(sex.numRec)[2, 3], 3)
+TableS4$linear_uci[TableS4$model == "Separate" & var == "Sex"] <- round(fixef(sex.numRec)[2, 4], 3)
+
+TableS4$linear_coef[TableS4$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.numRec)[2, 1], 3)
+TableS4$linear_se[TableS4$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.numRec)[2, 2], 3)
+TableS4$linear_lci[TableS4$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.numRec)[2, 3], 3)
+TableS4$linear_uci[TableS4$model == "Separate" & var == "Relatedness"] <- round(fixef(rel.numRec)[2, 4], 3)
+
+TableS4$linear_coef[TableS4$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.numRec)[2, 1], 3)
+TableS4$linear_se[TableS4$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.numRec)[2, 2], 3)
+TableS4$linear_lci[TableS4$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.numRec)[2, 3], 3)
+TableS4$linear_uci[TableS4$model == "Separate" & var == "Adult coop"] <- round(fixef(adult.numRec)[2, 4], 3)
+
+TableS4$linear_coef[TableS4$model == "Full"] <- round(fixef(full.numRec)[2:5, 1], 3)
+TableS4$linear_se[TableS4$model == "Full"] <- round(fixef(full.numRec)[2:5, 2], 3)
+TableS4$linear_lci[TableS4$model == "Full"] <- round(fixef(full.numRec)[2:5, 3], 3)
+TableS4$linear_uci[TableS4$model == "Full"] <- round(fixef(full.numRec)[2:5, 4], 3)
+
+TableS4
+
+
+# Poisson results
+TableS4$poisson_coef[TableS4$model == "Separate" & var == "Age"] <- round(exp(fixef(age.numRec.p)[2, 1]), 3)
+TableS4$poisson_lci[TableS4$model == "Separate" & var == "Age"] <- round(exp(fixef(age.numRec.p)[2, 3]), 3)
+TableS4$poisson_uci[TableS4$model == "Separate" & var == "Age"] <- round(exp(fixef(age.numRec.p)[2, 4]), 3)
+
+TableS4$poisson_coef[TableS4$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.numRec.p)[2, 1]), 3)
+TableS4$poisson_lci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.numRec.p)[2, 3]), 3)
+TableS4$poisson_uci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.numRec.p)[2, 4]), 3)
+
+TableS4$poisson_coef[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.numRec.p)[2, 1]), 3)
+TableS4$poisson_lci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.numRec.p)[2, 3]), 3)
+TableS4$poisson_uci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.numRec.p)[2, 4]), 3)
+
+TableS4$poisson_coef[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.numRec.p)[2, 1]), 3)
+TableS4$poisson_lci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.numRec.p)[2, 3]), 3)
+TableS4$poisson_uci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.numRec.p)[2, 4]), 3)
+
+TableS4$poisson_coef[TableS4$model == "Full"] <- round(exp(fixef(full.numRec.p)[2:5, 1]), 3)
+TableS4$poisson_lci[TableS4$model == "Full"] <- round(exp(fixef(full.numRec.p)[2:5, 3]), 3)
+TableS4$poisson_uci[TableS4$model == "Full"] <- round(exp(fixef(full.numRec.p)[2:5, 4]), 3)
+
+TableS4
+
+
+# Ordinal regression results
+TableS4$ord_coef[TableS4$model == "Separate" & var == "Age"] <- round(exp(fixef(age.numRec.o)[5, 1]), 3)
+TableS4$ord_lci[TableS4$model == "Separate" & var == "Age"] <- round(exp(fixef(age.numRec.o)[5, 3]), 3)
+TableS4$ord_uci[TableS4$model == "Separate" & var == "Age"] <- round(exp(fixef(age.numRec.o)[5, 4]), 3)
+
+TableS4$ord_coef[TableS4$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.numRec.o)[5, 1]), 3)
+TableS4$ord_lci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.numRec.o)[5, 3]), 3)
+TableS4$ord_uci[TableS4$model == "Separate" & var == "Sex"] <- round(exp(fixef(sex.numRec.o)[5, 4]), 3)
+
+TableS4$ord_coef[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.numRec.o)[5, 1]), 3)
+TableS4$ord_lci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.numRec.o)[5, 3]), 3)
+TableS4$ord_uci[TableS4$model == "Separate" & var == "Relatedness"] <- round(exp(fixef(rel.numRec.o)[5, 4]), 3)
+
+TableS4$ord_coef[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.numRec.o)[5, 1]), 3)
+TableS4$ord_lci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.numRec.o)[5, 3]), 3)
+TableS4$ord_uci[TableS4$model == "Separate" & var == "Adult coop"] <- round(exp(fixef(adult.numRec.o)[5, 4]), 3)
+
+TableS4$ord_coef[TableS4$model == "Full"] <- round(exp(fixef(full.numRec.o)[5:8, 1]), 3)
+TableS4$ord_lci[TableS4$model == "Full"] <- round(exp(fixef(full.numRec.o)[5:8, 3]), 3)
+TableS4$ord_uci[TableS4$model == "Full"] <- round(exp(fixef(full.numRec.o)[5:8, 4]), 3)
+
+TableS4
+
+# Save this table
+write_csv(TableS4, file = "../Results/TableS4.csv", quote = FALSE)
+
+
+
+# Next, explore the age association to test whether association is quadratic. Will explore various models, including:
+# - Linear age term, camp-level random intercepts only
+# - Quadratic age term, camp-level random intercepts only
+# - Linear age term, camp-level random slopes and intercepts
+# - Quadratic age term, camp-level random slopes and intercepts
+
+data <- data %>%
+  mutate(age2 = age^2)
+
+## Linear age term, camp-level random intercepts only
+age.noSlopes_numRec <- brm(numRecipients ~ age + (1 | camp), data = data, 
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 4029)
+summary(age.noSlopes_numRec)
+
+age.noSlopes_numRec <- add_criterion(age.noSlopes_numRec, "loo")
+
+
+## Quadratic age term, camp-level random intercepts only
+age2.noSlopes_numRec <- brm(numRecipients ~ age + age2 + (1 | camp), data = data, 
+                     warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 541416)
+summary(age2.noSlopes_numRec)
+
+age2.noSlopes_numRec <- add_criterion(age2.noSlopes_numRec, "loo")
+
+
+## Linear age term, camp-level random slopes and intercepts
+age.slopes_numRec <- brm(numRecipients ~ age + (age | camp), data = data, 
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 970368)
+summary(age.slopes_numRec)
+
+age.slopes_numRec <- add_criterion(age.slopes_numRec, "loo")
+
+
+## Quadratic age term, camp-level random slopes and intercepts
+age2.slopes_numRec <- brm(numRecipients ~ age + age2 + (age + age2 | camp), data = data, 
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 33674)
+summary(age2.slopes_numRec)
+
+age2.slopes_numRec <- add_criterion(age2.slopes_numRec, "loo")
+
+
+# Comparing the models, there is practically no difference in the loo model fit values, suggesting that random slopes and random intercepts is not a better fit than just random slopes (with age and age-squared RE model slightly worse), while age-squared term not improve model fit either. So the linear age term with camp-level random intercepts only appears to be the best fit to the data.
+loo(age.noSlopes_numRec)
+loo(age2.noSlopes_numRec)
+loo(age.slopes_numRec)
+loo(age2.slopes_numRec)
+
+# Drop the age-squared variable
+data <- data %>%
+  select(-age2)
+
 
 
 
@@ -1557,17 +1319,51 @@ summary(relate)
 relate$id <- factor(relate$id)
 relate$camp <- factor(relate$camp)
 
-# Mixed effect model to see whether individuals preferentially shared with kin, relative to background levels of relatedness in camp. Need to control for ID as a random effect as some children are repeated multiple times in the dataset (if gave multiple gifts), plus potentially camp if is camp-level variation
 
-## See if adding camp improves model fit - It doesn't
-null.camp <- lmer(Rel ~ (1|id) + (1|camp), REML=FALSE, data = relate)
-ranova(null.camp)
+### Mixed effect model to see whether individuals preferentially shared with kin, relative to background levels of relatedness in camp. Need to control for ID as a random effect as some children are repeated multiple times in the dataset (if gave multiple gifts), plus potentially camp if is camp-level variation
 
-# Now run the models
-camp.rel <- lmer(Rel ~ Cond + (1|id), REML=FALSE, data = relate)
+## Will explore different random effects structures to identify appropriate model
 
+# No random effects
+null.noml <- brm(Rel ~ 1, data = relate,
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 375367)
+summary(null.noml)
+
+null.noml <- add_criterion(null.noml, "loo")
+
+# Individual level random effects
+null.indiv <- brm(Rel ~ 1 + (1|id), data = relate,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 588739)
+summary(null.indiv)
+
+null.indiv <- add_criterion(null.indiv, "loo")
+
+# Camp level random effects
+null.camp <- brm(Rel ~ 1 + (1|camp), data = relate,
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 881417)
+summary(null.camp)
+
+null.camp <- add_criterion(null.camp, "loo")
+
+# Individual and camp level random effects
+null.indiv_camp <- brm(Rel ~ 1 + (1|id) + (1|camp), data = relate,
+                            warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 606000)
+summary(null.indiv_camp)
+
+null.indiv_camp <- add_criterion(null.indiv_camp, "loo")
+
+
+## Compare these models - Individual ID random effects same fit as individual ID and camp random effects, so go with simpler model (individual ID random effects only)
+loo(null.noml)
+loo(null.indiv)
+loo(null.camp)
+loo(null.indiv_camp)
+
+
+### Now run the actual model
+camp.rel <- brm(Rel ~ Cond + (1|id), data = relate,
+                warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 588739)
 summary(camp.rel)
-confint(camp.rel)
 
 
 # Plot the raw data by condition - Make a quick table of mean values first
@@ -1603,17 +1399,17 @@ dev.off()
 
 
 # First check some model assumptions (of normality) - The residuals are really dodgy, and no transformation 
-# would fix this (this is because the raw data are bimodal - Relatedness to recipients has a major mode 
-# at 0.5, and a small peak at around 0)
+# would fix this (this is because the raw data are multimodal - Relatedness to recipients has a major mode 
+# at 0.5, and small peaks at around 0, 0.125 and 0.25)
 pdf("../Results/FigS9_Residuals_CampRelModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
-hist(residuals(camp.rel), main = NULL, xlab = "Residuals")
+hist(residuals(camp.rel)[, "Estimate"], main = NULL, xlab = "Residuals")
 text(-0.3, 105, "A", cex = 2.5)
 
-qqnorm(residuals(camp.rel), main = NULL)
-qqline(residuals(camp.rel))
+qqnorm(residuals(camp.rel)[, "Estimate"], main = NULL)
+qqline(residuals(camp.rel)[, "Estimate"])
 text(-2.5, 0.25, "B", cex = 2.5)
 
 dev.off()
@@ -1625,10 +1421,16 @@ par(mfrow = c(1, 1))
 # weird because the raw data is very non-normal)
 pdf("../Results/FigS10_Heteroskedasticity_CampRelModel.pdf", width = 8, height = 6)
 
-plot(residuals(camp.rel) ~ fitted.values(camp.rel), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(camp.rel)[, "Estimate"] ~ fitted.values(camp.rel)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 
 dev.off()
 
+
+### And a sanity check that including camp as an additional random effect doesn't alter results - Yup, results practically identical to above.
+camp.rel2 <- brm(Rel ~ Cond + (1|id) + (1|camp), data = relate,
+                warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 756473)
+summary(camp.rel2)
 
 
 #############################################################################################
@@ -1645,20 +1447,84 @@ recip$camp <- factor(recip$camp)
 recip$alter_id <- factor(recip$alter_id)
 
 
-# Find the optimal random effects structure in a null model where 'relatedness' is the outcome - Individual ID random effect improves model fit, while camp-level random effect does not
-rel.ml.null <- lmer(rel ~ (1|id) + (1|camp), REML = FALSE, data = recip)
-ranova(rel.ml.null)
+## Find the optimal random effects structure in a null model where 'relatedness' is the outcome
 
-  
-# Now look at whether age and sex are associated with the relatedness between giver and recipient
-rel.agesex <- lmer(rel ~ egoAge + egoSex + (1|id), REML = FALSE, data = recip)
+# Full model (with all random effects terms) - Lots of convergence warnings and some r-hat values >= 1.01, so will see if removing terms improves with without affecting model fit
+rel.ml <- brm(rel ~ 1 + (1 | id) + (1 | alter_id) + (1 | camp), data = recip,
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 709080)
+summary(rel.ml)
+
+rel.ml <- add_criterion(rel.ml, "loo")
+
+# Dropping alter ID - Better than full model, but still some issues
+rel.ml_noAlter <- brm(rel ~ 1 + (1 | id) + (1 | camp), data = recip,
+                           warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 986468)
+summary(rel.ml_noAlter)
+
+rel.ml_noAlter <- add_criterion(rel.ml_noAlter, "loo")
+
+# Dropping camp - Better than full model, but still some issues
+rel.ml_noCamp <- brm(rel ~ 1 + (1 | id) + (1 | alter_id), data = recip,
+                          warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 550780)
+summary(rel.ml_noCamp)
+
+rel.ml_noCamp <- add_criterion(rel.ml_noCamp, "loo")
+
+# Dropping camp and alter ID - Still a couple of warnings, but better than other models
+rel.ml_noAlterCamp <- brm(rel ~ 1 + (1 | id), data = recip,
+                               warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 916708)
+summary(rel.ml_noAlterCamp)
+
+rel.ml_noAlterCamp <- add_criterion(rel.ml_noAlterCamp, "loo")
+
+# No multi-level structure
+rel.noml <- brm(rel ~ 1, data = recip,
+                          warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 192978)
+summary(rel.noml)
+
+rel.noml <- add_criterion(rel.noml, "loo")
+
+
+## Comparing models - Best fit is most complex model, although SEs of LOOIC are very wide and and overlapping, meaning choice of best model not completely obvious. Addition of 'camp' doesn't make that much difference, though. Given warnings and issues of model fit, will use ego ID only as main model.
+loo(rel.ml)
+loo(rel.ml_noAlter)
+loo(rel.ml_noCamp)
+loo(rel.ml_noAlterCamp)
+loo(rel.noml)
+
+
+## Now look at whether age and sex are associated with the relatedness between giver and recipient 
+
+# First with ego ID as random effect (and other models with 'camp' and alter ID as well, to check stability of results) - All give very similar results
+rel.agesex <- brm(rel ~ egoAge + egoSex + (1 | id), data = recip,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 151088)
 summary(rel.agesex)
-confint(rel.agesex)
+#plot(rel.agesex, N = 3)
+round(fixef(rel.agesex), 3)
 
-# Is there an interaction between age and sex? No, so will focus on main effects
-rel.agebysex <- lmer(rel ~ egoAge * egoSex + (1|id), REML = FALSE, data = recip)
+rel.agesex_alter <- brm(rel ~ egoAge + egoSex + (1 | id) + (1 | alter_id), data = recip,
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 599992)
+summary(rel.agesex_alter)
+
+rel.agesex_alterCamp <- brm(rel ~ egoAge + egoSex + (1 | id) + (1 | alter_id) + (1 | camp), data = recip,
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 845179)
+summary(rel.agesex_alterCamp)
+
+
+# Now with interaction term - No evidence for interaction
+rel.agebysex <- brm(rel ~ egoAge * egoSex + (1 | id), data = recip,
+                         warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 780416)
 summary(rel.agebysex)
-confint(rel.agebysex)
+round(fixef(rel.agebysex), 3)
+
+rel.agebysex_alter <- brm(rel ~ egoAge * egoSex + (1 | id) + (1 | alter_id), data = recip,
+                          warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 39681)
+summary(rel.agebysex_alter)
+
+rel.agebysex_alterCamp <- brm(rel ~ egoAge * egoSex + (1 | id) + (1 | alter_id) + (1 | camp), data = recip,
+                          warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 983187)
+summary(rel.agebysex_alterCamp)
+
 
 ## Strongest effect is that of ego age - As ego age increases, more likely to give to less related
 ## camp-mates. Although is a weak effect of sex as well (with boys more likely to share with close kin than girls)
@@ -1666,17 +1532,17 @@ confint(rel.agebysex)
 
 # Check assumptions of main effects model
 
-# Normality - The residuals are really dodgy, and I doubt that transformations will help given the
-# really weird distribution of relatedness
+# Normality - The residuals are not quite normal, and I doubt that transformations will help given the
+# odd distribution of relatedness
 pdf("../Results/FigS11_Residuals_RelAgeSexModel.pdf", width = 12, height = 5)
 
 par(mfrow = c(1,2))
 
-hist(residuals(rel.agesex), main = NULL, xlab = "Residuals")
-text(-0.2, 120, "A", cex = 2.5)
+hist(residuals(rel.agesex)[, "Estimate"], main = NULL, xlab = "Residuals")
+text(-0.3, 120, "A", cex = 2.5)
 
-qqnorm(residuals(rel.agesex), main = NULL)
-qqline(residuals(rel.agesex))
+qqnorm(residuals(rel.agesex)[, "Estimate"], main = NULL)
+qqline(residuals(rel.agesex)[, "Estimate"])
 text(-2.5, 0.25, "B", cex = 2.5)
 
 dev.off()
@@ -1687,7 +1553,8 @@ par(mfrow = c(1, 1))
 # Now test for heteroskedascity - It ain't too great...
 pdf("../Results/FigS12_Heteroskedasticity_RelAgeSexModel.pdf", width = 8, height = 6)
 
-plot(residuals(rel.agesex) ~ fitted.values(rel.agesex), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(rel.agesex)[, "Estimate"] ~ fitted.values(rel.agesex)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 
 dev.off()
 
@@ -1739,38 +1606,105 @@ fig3
 dev.off()
 
 
+
 ## As the outcome variable is very skewed, I'll run the same model but using a binary marker of 'shared with sibling or not' as the response variable
 head(recip)
 
 recip$sib <- ifelse(recip$rel == 0.5, 1, 0)
 table(recip$sib)
 
-rel.agesex.bin <- glmer(sib ~ egoAge + egoSex + (1|id), family = "binomial", data = recip)
+rel.agesex.bin <- brm(sib ~ egoAge + egoSex + (1|id), family = "bernoulli", data = recip,
+                      warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 170005)
 summary(rel.agesex.bin)
-exp(confint(rel.agesex.bin, method = "Wald"))
+#plot(rel.agesex.bin, N = 3)
 
-### THESE MIXED-EFFECTS LOGISTIC MODELS SHOULD NOT BE TRUSTED!!! The parameter estimates are pretty ridiculous - For instance, the log odds for sex is 3.5, meaning the odds of sharing with siblings are 33 times higher if you're a boy!!
+fixef(rel.agesex.bin)
+exp(fixef(rel.agesex.bin))
 
-# The predicted probabilities are also highly improbable, as a boy aged 5 had a 99% probability of sharing with siblings, while for a girl aged 15 the probability of sharing with a sibling was 1%. This suggests estimation and convergence issues with this model.
+### The results of this model should not be trusted!!! The parameter estimates are pretty ridiculous - For instance, the log odds for sex is 3.1, meaning the odds of sharing with siblings are 21 times higher if you're a boy!!
+
+# The predicted probabilities are also highly improbable, as a boy aged 5 had a 97% probability of sharing with siblings, while for a girl aged 15 the probability of sharing with a sibling was 3%. This suggests estimation and convergence issues with this model.
 newdata <- data.frame(cbind(egoAge = rep(c(5, 10, 15), 2),
                             egoSex = rep(c(0, 1), each = 3)))
 newdata
-newdata$probs <- predict(rel.agesex.bin, newdata = newdata, type = "response", re.form = NA)
+newdata$probs <- predict(rel.agesex.bin, newdata = newdata, type = "response", re_formula = NA)[, "Estimate"]
 newdata
 
 
-# In the non-ML GLM the coefficients are much more sensible... Looking at the raw stats, there is a definite increase in boys giving to sibs, but the output from the ML model is just bananas! If I run the model without the mixed-effect then the estimates are much more sensible the OR for age is 0.87, while the OR for sex is 2.36 (but obviously this doesn't take the non-independence of data points into consideration).
-table(recip$sib[recip$egoSex == 1])
-table(recip$sib[recip$egoSex == 0])
+## Look at raw data by sex, to see whether this is plausible - Predicted values are in right direction, but seem too extreme given the raw data
 
-rel.agesex.bin.noml <- glm(sib ~ egoAge + egoSex, family = "binomial", data = recip)
+# For boys
+sib_age_boy <- recip %>%
+  filter(egoSex == 1) %>%
+  mutate(age_cats = cut(egoAge, breaks=c(-Inf, 6.99, 10.99, Inf), labels=c("3-7","7-11","11+"))) %>%
+  select(sib, egoAge, age_cats)
+summary(sib_age_boy)
+
+df_boy <- sib_age_boy %>%
+  group_by(age_cats, sib) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+df_boy
+
+# For girls
+sib_age_girl <- recip %>%
+  filter(egoSex == 0) %>%
+  mutate(age_cats = cut(egoAge, breaks=c(-Inf, 6.99, 10.99, Inf), labels=c("3-7","7-11","11+"))) %>%
+  select(sib, egoAge, age_cats)
+summary(sib_age_girl)
+
+# Make summary stats
+df_girl <- sib_age_girl %>%
+  group_by(age_cats, sib) %>%
+  summarise (n = n()) %>%
+  mutate(freq = n / sum(n))
+df_girl
+
+
+# In the non-ML GLM the coefficients are much more sensible... Looking at the raw stats, there is a definite increase in boys giving to sibs, but the output from the ML model is just bananas! If I run the model without the mixed-effect then the estimates are much more sensible the OR for age is 0.87, while the OR for sex is 2.38 (but obviously this doesn't take the non-independence of data points into consideration).
+rel.agesex.bin.noml <- brm(sib ~ egoAge + egoSex, family = "bernoulli", data = recip,
+                           warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 979498)
 summary(rel.agesex.bin.noml)
 
-exp(coefficients(rel.agesex.bin.noml))
-exp(confint(rel.agesex.bin.noml))
+fixef(rel.agesex.bin.noml)
+exp(fixef(rel.agesex.bin.noml))
 
 
-## Will make a simple non-ML model using average relatedness to recipients, and see if same results hold. These results seem to be just fine, so not 100% sure why the glmer went all screwy...
+## Try popping in some informative priors for these parameters (to specify priors on the intercept, have to use the "0 + Intercept", notation - see: https://www.rensvandeschoot.com/tutorials/brms-priors/).
+get_prior(sib ~ 0 + Intercept + egoAge + egoSex + (1|id), data = recip)
+
+# Set the priors:
+# Age: As expect age association to be negative (given models above), will set age effect close to that of single-level sibling model (i.e., -0.1)
+# Sex: As expect this to be positive (as males perhaps more likely to share with siblings), will set this prior to be positive, at a log-odds of 0.8 (similar to single-level model)
+# Intercept: Expect baseline odds of sharing with kin to be quite high, so will set at a log-odds of 1 (odds ratio of 2.7; again, similar to the single-level model)
+prior <- c(set_prior("normal(-0.1, 0.2)", class = "b", coef = "egoAge"),
+           set_prior("normal(0.8, 0.5)", class = "b", coef = "egoSex"),
+           set_prior("normal(1, 0.5)", class = "b", coef = "Intercept"))
+
+rel.agesex.bin_prior <- brm(sib ~ 0 + Intercept + egoAge + egoSex + (1|id), 
+                                 family = "bernoulli", data = recip,
+                                 warmup = 1000, iter = 3000, chains = 4, init = "random", 
+                                 prior = prior, seed = 548089)
+summary(rel.agesex.bin_prior)
+prior_summary(rel.agesex.bin_prior)
+#plot(rel.agesex.bin_prior, N = 3)
+
+## The parameter estimates are much less extreme and look more sensible now (e.g., odds ratio of boys giving to siblings is now 3.6, rather than 21)
+fixef(rel.agesex.bin_prior)
+exp(fixef(rel.agesex.bin_prior))
+
+# Check if predicted values are more sensible - These do look more realistic as well, and although they show the same pattern of results as a original default prior model, they are less extreme.
+newdata_prior <- data.frame(cbind(egoAge = rep(c(5, 10, 15), 2),
+                            egoSex = rep(c(0, 1), each = 3)))
+newdata_prior
+newdata_prior$probs <- predict(rel.agesex.bin_prior, newdata = newdata, type = "response", 
+                               re_formula = NA)[, "Estimate"]
+newdata_prior
+newdata
+
+
+
+## Will make a simple non-ML model using average relatedness to recipients, and see if same results hold (they do)
 head(recip)
 
 recip2 <- recip %>%
@@ -1781,8 +1715,11 @@ head(recip2)
 
 hist(recip2$rel)
 
-rel2.model <- lm(rel ~ egoAge + egoSex, na.action = na.pass, data = recip2)
+rel2.model <- brm(rel ~ egoAge + egoSex, data = recip2,
+                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 355189)
 summary(rel2.model)
+
+round(fixef(rel2.model), 3)
 
 
 # Tests of assumptions
@@ -1790,14 +1727,15 @@ pdf("../Results/FigS13_AssumptionPlots_SingleLevelRelAgeSexModel_.pdf", width = 
 
 par(mfrow = c(1,3))
 
-hist(residuals(rel2.model), main = NULL, xlab = "Residuals")
+hist(residuals(rel2.model)[, "Estimate"], main = NULL, xlab = "Residuals")
 text(-0.35, 33, "A", cex = 2.5)
 
-qqnorm(residuals(rel2.model), main = NULL)
-qqline(residuals(rel2.model))
+qqnorm(residuals(rel2.model)[, "Estimate"], main = NULL)
+qqline(residuals(rel2.model))[, "Estimate"]
 text(-2.2, 0.28, "B", cex = 2.5)
 
-plot(residuals(rel2.model) ~ fitted.values(rel2.model), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(rel2.model)[, "Estimate"] ~ fitted.values(rel2.model)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 text(0.4, 0.28, "C", cex = 2.5)
 
 dev.off()
@@ -1810,23 +1748,22 @@ recip2$sib <- ifelse(recip2$rel == 0.5, 1, 0)
 head(recip2)
 table(recip2$sib)
 
-rel2.bin <- glm(sib ~ egoAge + egoSex, family = "binomial", na.action = na.pass, data = recip2)
+rel2.bin <- brm(sib ~ egoAge + egoSex, data = recip2, family = "bernoulli",
+                warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 325598)
 summary(rel2.bin)
 
-exp(coef(rel2.bin))
-exp(confint(rel2.bin))
+fixef(rel2.bin)
+round(exp(fixef(rel2.bin)), 3)
 
 
 ## Make a table to save these results to
 TableS5 <- data.frame(cbind(variable = c("Intercept", "Age", "Sex"),
-                            linear_coef = coef(summary(rel2.model))[,1],
-                            linear_lci = confint(rel2.model)[,1],
-                            linear_uci = confint(rel2.model)[,2],
-                            linear_p = coef(summary(rel2.model))[,4],
-                            logit_coef = exp(coef(summary(rel2.bin))[,1]),
-                            logit_lci = exp(confint(rel2.bin)[,1]),
-                            logit_uci = exp(confint(rel2.bin)[,2]),
-                            logit_p = coef(summary(rel2.bin))[,4]
+                            linear_coef = fixef(rel2.model)[,1],
+                            linear_lci = fixef(rel2.model)[,3],
+                            linear_uci = fixef(rel2.model)[,4],
+                            logit_coef = exp(fixef(rel2.bin)[,1]),
+                            logit_lci = exp(fixef(rel2.bin)[,3]),
+                            logit_uci = exp(fixef(rel2.bin)[,4])
                             ))
 TableS5
 
@@ -1838,16 +1775,12 @@ TableS5 <- TableS5 %>%
   mutate(linear_lci = round(linear_lci, 3)) %>%
   mutate(linear_uci = as.numeric(linear_uci)) %>%
   mutate(linear_uci = round(linear_uci, 3)) %>%
-  mutate(linear_p = as.numeric(linear_p)) %>%
-  mutate(linear_p = round(linear_p, 3)) %>%
   mutate(logit_coef = as.numeric(logit_coef)) %>%
   mutate(logit_coef = round(logit_coef, 3)) %>%
   mutate(logit_lci = as.numeric(logit_lci)) %>%
   mutate(logit_lci = round(logit_lci, 3)) %>%
   mutate(logit_uci = as.numeric(logit_uci)) %>%
-  mutate(logit_uci = round(logit_uci, 3)) %>%
-  mutate(logit_p = as.numeric(logit_p)) %>%
-  mutate(logit_p = round(logit_p, 3))
+  mutate(logit_uci = round(logit_uci, 3))
 
 TableS5
 
@@ -1855,11 +1788,11 @@ write_csv(TableS5, "../Results/tableS5.csv", quote = FALSE)
 
 
 # Look at predicted probabilities, as easier to interpret than odds ratios
-newdata <- data.frame(cbind(egoAge = rep(c(5, 10, 15), 2),
+newdata_noml <- data.frame(cbind(egoAge = rep(c(5, 10, 15), 2),
                             egoSex = rep(c(0, 1), each = 3)))
-newdata
-newdata$probs <- predict(rel2.bin, newdata = newdata, type = "response")
-newdata
+newdata_noml
+newdata_noml$probs <- predict(rel2.bin, newdata = newdata, type = "response")[, "Estimate"]
+newdata_noml
 
 
 
@@ -1868,27 +1801,64 @@ newdata
 
 ### i) Factors predicting age of recipient
 
-# Find the optimal random effects structure in a null model where 'recipient age' is the outcome - Ego ID improves model fit, while camp RE does not, so will just use ego ID as random effect
-recAge.ml.null <- lmer(recAge ~ (1|id) + (1|camp), REML = FALSE, data = recip)
-ranova(recAge.ml.null)
+# Find the optimal random effects structure in a null model where 'recipient age' is the outcome
 
-# Null model with ego ID as random effect
-recAge.ml.null <- lmer(recAge ~ (1|id), REML = FALSE, data = recip)
-summary(recAge.ml.null)
+# Full model (with all random effects terms) - Lots of convergence warnings and high r-hat values (around 3 to 4)
+recAge.ml <- brm(recAge ~ 1 + (1 | id) + (1 | alter_id) + (1 | camp), data = recip,
+                      warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 583653)
+summary(recAge.ml)
+
+recAge.ml <- add_criterion(recAge.ml, "loo")
+
+# Dropping alter ID - Much better than full model, but still some issues
+recAge.ml_noAlter <- brm(recAge ~ 1 + (1 | id) + (1 | camp), data = recip,
+                              warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 646089)
+summary(recAge.ml_noAlter)
+
+recAge.ml_noAlter <- add_criterion(recAge.ml_noAlter, "loo")
+
+# Dropping camp - Pretty much same as full model, as lots of warnings/issues and massive r-hat values
+recAge.ml_noCamp <- brm(recAge ~ 1 + (1 | id) + (1 | alter_id), data = recip,
+                             warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 178013)
+summary(recAge.ml_noCamp)
+
+recAge.ml_noCamp <- add_criterion(recAge.ml_noCamp, "loo")
+
+# Dropping camp and alter ID - Still a couple of issues, but generally much better
+recAge.ml_noAlterCamp <- brm(recAge ~ 1 + (1 | id), data = recip,
+                                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 50583)
+summary(recAge.ml_noAlterCamp)
+
+recAge.ml_noAlterCamp <- add_criterion(recAge.ml_noAlterCamp, "loo")
+
+# No random effects
+recAge.noml <- brm(recAge ~ 1, data = recip,
+                             warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 129754)
+summary(recAge.noml)
+
+recAge.noml <- add_criterion(recAge.noml, "loo")
+
+
+## Comparing models - Best fit is apparently the most complex model, but the loo values are no way near each other suggesting they're not comparable at all... Comparing the models which fitted well, inclusion of camp not improve model fit, so just using ego ID
+loo(recAge.ml)
+loo(recAge.ml_noAlter)
+loo(recAge.ml_noCamp)
+loo(recAge.ml_noAlterCamp)
+loo(recAge.noml)
 
 
 ## Now look at whether age, sex and relatedness are associated with recipient age. Here, we see that ego age is positively associated with recipient age, and relatedness is strongly negatively associated with recipient age
-recAge.full <- lmer(recAge ~ egoAge + egoSex + rel + (1|id), REML = FALSE, data = recip)
+recAge.full <- brm(recAge ~ egoAge + egoSex + rel + (1 | id), data = recip,
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 905316)
 summary(recAge.full)
 
 ## Make a table to save these results to
 TableS6 <- data.frame(cbind(variable = c("Intercept", "Age", "Sex", "Relatedness"),
-                            coef = coef(summary(recAge.full))[,1],
-                            se = coef(summary(recAge.full))[,2],
-                            lci = confint(recAge.full)[3:6,1],
-                            uci = confint(recAge.full)[3:6,2],
-                            p = coef(summary(recAge.full))[,5]
-                            ))
+                            coef = fixef(recAge.full)[,1],
+                            se = fixef(recAge.full)[,2],
+                            lci = fixef(recAge.full)[,3],
+                            uci = fixef(recAge.full)[,4]
+))
 TableS6
 
 # Convert estimates to numeric and round
@@ -1900,9 +1870,7 @@ TableS6 <- TableS6 %>%
   mutate(lci = as.numeric(lci)) %>%
   mutate(lci = round(lci, 3)) %>%
   mutate(uci = as.numeric(uci)) %>%
-  mutate(uci = round(uci, 3)) %>%
-  mutate(p = as.numeric(p)) %>%
-  mutate(p = round(p, 3))
+  mutate(uci = round(uci, 3))
 
 TableS6
 
@@ -1910,13 +1878,19 @@ write_csv(TableS6, "../Results/tableS6.csv", quote = FALSE)
 
 
 ## Plot some predicted results to make this clearer
-recip$fitted_age <- fitted.values(recAge.full)
+recip$fitted_age <- fitted(recAge.full)[, "Estimate"]
 summary(recip$fitted_age)
 
-(age_fit <- ggplot(data = recip,
-                   aes(x = egoAge, y = fitted_age)) +
-    geom_smooth(method = "lm", colour = "black") +
-    geom_point() +
+df_age <- data.frame(egoAge = 3:18, egoSex = 0.5, rel = mean(recip$rel))
+df_age$fit <- fitted(recAge.full, newdata = df_age, re_formula = NA)[, "Estimate"]
+df_age$fit_uci <- fitted(recAge.full, newdata = df_age, re_formula = NA)[, "Q2.5"]
+df_age$fit_lci <- fitted(recAge.full, newdata = df_age, re_formula = NA)[, "Q97.5"]
+head(df_age)
+
+(age_fit <- ggplot(data = NULL) +
+    geom_ribbon(data = df_age, aes(ymin = fit_lci, ymax = fit_uci, x = egoAge), fill = "gray90") +
+    geom_line(data = df_age, aes(x = egoAge, y = fit), colour = "black", size = 1) +
+    geom_point(data = recip, aes(x = egoAge, y = fitted_age)) +
     ylab("Predicted age of recipient") +
     xlab("Child age (years)") +
     theme_bw() +
@@ -1928,16 +1902,21 @@ summary(recip$fitted_age)
     scale_y_continuous(breaks = seq(2, 13, 2), limits = c(1.5, 13.5)) +
     scale_x_continuous(breaks = seq(3, 18, 3)))
 
-
 pdf("../Results/FigS14_EgoAndRecAge.pdf", width = 10, height = 8)
 age_fit
 dev.off()
 
-set.seed(1234)
-(rel_fit <- ggplot(data = recip,
-                   aes(x = rel, y = fitted_age)) +
-    geom_smooth(method = "lm", colour = "black") +
-    geom_point(position = position_jitter(width = 0.005)) +
+df_rel <- data.frame(egoAge = mean(recip$egoAge), egoSex = 0.5, rel = seq(from = 0, to = 0.5, by = 0.05))
+df_rel$fit <- fitted(recAge.full, newdata = df_rel, re_formula = NA)[, "Estimate"]
+df_rel$fit_uci <- fitted(recAge.full, newdata = df_rel, re_formula = NA)[, "Q2.5"]
+df_rel$fit_lci <- fitted(recAge.full, newdata = df_rel, re_formula = NA)[, "Q97.5"]
+head(df_rel)
+
+set.seed(295082)
+(rel_fit <- ggplot(NULL) +
+    geom_ribbon(data = df_rel, aes(ymin = fit_lci, ymax = fit_uci, x = rel), fill = "gray90") +
+    geom_line(data = df_rel, aes(x = rel, y = fit), colour = "black", size = 1) +
+    geom_point(data = recip, aes(x = rel, y = fitted_age), position = position_jitter(width = 0.005)) +
     ylab("Predicted age of recipient") +
     xlab("Relatedness") +
     theme_bw() +
@@ -1957,48 +1936,96 @@ dev.off()
 ## Interaction models
 
 # Age by sex: No interaction
-recAge.agebysex <- lmer(recAge ~ egoAge * egoSex + rel + (1|id), REML = FALSE, data = recip)
+recAge.agebysex <- brm(recAge ~ egoAge * egoSex + rel + (1|id), data = recip,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 866750)
 summary(recAge.agebysex)
 
 # Age by relatedness: No interaction
-recAge.agebyrel <- lmer(recAge ~ egoAge * rel + egoSex + (1|id), REML = FALSE, data = recip)
+recAge.agebyrel <- brm(recAge ~ egoAge * rel + egoSex + (1|id), data = recip,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 181861)
 summary(recAge.agebyrel)
 
 # sex by relatedness: Weak interaction, so will ignore here
-recAge.sexbyrel <- lmer(recAge ~ egoAge + egoSex * rel + (1|id), REML = FALSE, data = recip)
+recAge.sexbyrel <- brm(recAge ~ egoAge + egoSex * rel + (1|id), data = recip,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 59669)
 summary(recAge.sexbyrel)
 
 
 # what about model assumptions (using the main effects model)? Don't look too bad.
-hist(residuals(recAge.full), main = NULL, xlab = "Residuals")
+hist(residuals(recAge.full)[, "Estimate"], main = NULL, xlab = "Residuals")
 
-qqnorm(residuals(recAge.full), main = NULL)
-qqline(residuals(recAge.full))
+qqnorm(residuals(recAge.full)[, "Estimate"], main = NULL)
+qqline(residuals(recAge.full)[, "Estimate"])
 
-plot(residuals(recAge.full) ~ fitted.values(recAge.full), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(recAge.full)[, "Estimate"] ~ fitted.values(recAge.full)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 
 
 
 ### ii) Factors predicting age difference between ego and alter
 
-# Find the optimal random effects structure in a null model where 'age difference' is the outcome - Both ego ID and camp REs improves model fit, so will just use both as random effects
-ageDiff.ml.null <- lmer(ageDiff ~ (1|id) + (1|camp), REML = FALSE, data = recip)
-ranova(ageDiff.ml.null)
+# Find the optimal random effects structure in a null model where 'age difference' is the outcome
 
-summary(ageDiff.ml.null)
+# Full model (with all random effects terms) - Lots of convergence warnings and high r-hat values (around 3 to 4)
+ageDiff.ml <- brm(ageDiff ~ 1 + (1 | id) + (1 | alter_id) + (1 | camp), data = recip,
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 394107)
+summary(ageDiff.ml)
+
+ageDiff.ml <- add_criterion(ageDiff.ml, "loo")
+
+# Dropping alter ID - Much better than full model, but still some issues
+ageDiff.ml_noAlter <- brm(ageDiff ~ 1 + (1 | id) + (1 | camp), data = recip,
+                               warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 294275)
+summary(ageDiff.ml_noAlter)
+
+ageDiff.ml_noAlter <- add_criterion(ageDiff.ml_noAlter, "loo")
+
+# Dropping camp - Pretty much same as full model, as lots of warnings/issues and massive r-hat values
+ageDiff.ml_noCamp <- brm(ageDiff ~ 1 + (1 | id) + (1 | alter_id), data = recip,
+                              warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 947324)
+summary(ageDiff.ml_noCamp)
+
+ageDiff.ml_noCamp <- add_criterion(ageDiff.ml_noCamp, "loo")
+
+# Dropping camp and alter ID - Still a couple of issues, but generally much better
+ageDiff.ml_noAlterCamp <- brm(ageDiff ~ 1 + (1 | id), data = recip,
+                                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 944599)
+summary(ageDiff.ml_noAlterCamp)
+
+ageDiff.ml_noAlterCamp <- add_criterion(ageDiff.ml_noAlterCamp, "loo")
+
+# No random effects
+ageDiff.noml <- brm(ageDiff ~ 1, data = recip,
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 375146)
+summary(ageDiff.noml)
+
+ageDiff.noml <- add_criterion(ageDiff.noml, "loo")
+
+
+## Comparing models - Best fit is apparently the most complex model, but the loo values are no way near each other suggesting they're not comparable at all... Comparing the two models which fitted well, inclusion of camp slightly improves model fit, but not by much, so just using ego ID
+loo(ageDiff.ml)
+loo(ageDiff.ml_noAlter)
+loo(ageDiff.ml_noCamp)
+loo(ageDiff.ml_noAlterCamp)
+loo(ageDiff.noml)
 
 
 ## Now look at whether age, sex and relatedness are associated with age difference. Here, we see that ego age is negatively associated with age difference (as ego age increased, so does the age difference), and relatedness is strongly negatively associated with age difference (meaning close kin recipients were likely to have a larger age gap/be younger than than non-kin recipients)
-ageDiff.full <- lmer(ageDiff ~ egoAge + egoSex + rel + (1|id) + (1|camp), REML = FALSE, data = recip)
+ageDiff.full <- brm(ageDiff ~ egoAge + egoSex + rel + (1|id), data = recip,
+                              warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 537939)
 summary(ageDiff.full)
+
+## And if include camp RE? Same results
+ageDiff.full_camp <- brm(ageDiff ~ egoAge + egoSex + rel + (1|id) + (1|camp), data = recip,
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 229228)
+summary(ageDiff.full_camp)
 
 ## Make a table to save these results to
 TableS7 <- data.frame(cbind(variable = c("Intercept", "Age", "Sex", "Relatedness"),
-                            coef = coef(summary(ageDiff.full))[,1],
-                            se = coef(summary(ageDiff.full))[,2],
-                            lci = confint(ageDiff.full)[4:7,1],
-                            uci = confint(ageDiff.full)[4:7,2],
-                            p = coef(summary(ageDiff.full))[,5]
+                            coef = fixef(ageDiff.full)[,1],
+                            se = fixef(ageDiff.full)[,2],
+                            lci = fixef(ageDiff.full)[,3],
+                            uci = fixef(ageDiff.full)[,4]
 ))
 TableS7
 
@@ -2011,9 +2038,7 @@ TableS7 <- TableS7 %>%
   mutate(lci = as.numeric(lci)) %>%
   mutate(lci = round(lci, 3)) %>%
   mutate(uci = as.numeric(uci)) %>%
-  mutate(uci = round(uci, 3)) %>%
-  mutate(p = as.numeric(p)) %>%
-  mutate(p = round(p, 3))
+  mutate(uci = round(uci, 3))
 
 TableS7
 
@@ -2024,25 +2049,29 @@ write_csv(TableS7, "../Results/tableS7.csv", quote = FALSE)
 ## Interaction models
 
 # Age by sex: No interaction
-ageDiff.agebysex <- lmer(ageDiff ~ egoAge * egoSex + rel + (1|id) + (1|camp), REML = FALSE, data = recip)
+ageDiff.agebysex <- brm(ageDiff ~ egoAge * egoSex + rel + (1|id), data = recip,
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 437615)
 summary(ageDiff.agebysex)
 
 # Age by relatedness: No interaction
-ageDiff.agebyrel <- lmer(ageDiff ~ egoAge * rel + egoSex + (1|id) + (1|camp), REML = FALSE, data = recip)
+ageDiff.agebyrel <- brm(ageDiff ~ egoAge * rel + egoSex + (1|id), data = recip,
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 35163)
 summary(ageDiff.agebyrel)
 
 # sex by relatedness: Weak interaction, so will ignore here
-ageDiff.sexbyrel <- lmer(ageDiff ~ egoAge + egoSex * rel + (1|id) + (1|camp), REML = FALSE, data = recip)
+ageDiff.sexbyrel <- brm(ageDiff ~ egoAge + egoSex * rel + (1|id), data = recip,
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 338479)
 summary(ageDiff.sexbyrel)
 
 
 # what about model assumptions (using the main effects model)? Don't look too bad.
-hist(residuals(ageDiff.full), main = NULL, xlab = "Residuals")
+hist(residuals(ageDiff.full)[, "Estimate"], main = NULL, xlab = "Residuals")
 
-qqnorm(residuals(ageDiff.full), main = NULL)
-qqline(residuals(ageDiff.full))
+qqnorm(residuals(ageDiff.full)[, "Estimate"], main = NULL)
+qqline(residuals(ageDiff.full)[, "Estimate"])
 
-plot(residuals(ageDiff.full) ~ fitted.values(ageDiff.full), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(ageDiff.full)[, "Estimate"] ~ fitted.values(ageDiff.full)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 
 
 ## Put these assumption plots for alter age and age diff into one 3x2 plot
@@ -2051,25 +2080,27 @@ pdf("../Results/FigS16_AssumptionPlots_AlterAge_AgeDiff.pdf", width = 12, height
 par(mfrow = c(2,3))
 
 # Alter age
-hist(residuals(recAge.full), main = NULL, xlab = "Residuals")
+hist(residuals(recAge.full)[, "Estimate"], main = NULL, xlab = "Residuals")
 text(-6, 95, "1A", cex = 2)
 
-qqnorm(residuals(recAge.full), main = NULL)
-qqline(residuals(recAge.full))
+qqnorm(residuals(recAge.full)[, "Estimate"], main = NULL)
+qqline(residuals(recAge.full)[, "Estimate"])
 text(-2.5, 9, "1B", cex = 2)
 
-plot(residuals(recAge.full) ~ fitted.values(recAge.full), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(recAge.full)[, "Estimate"] ~ fitted.values(recAge.full)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 text(3.25, 9, "1C", cex = 2)
 
 # Age diff
-hist(residuals(ageDiff.full), main = NULL, xlab = "Residuals")
+hist(residuals(ageDiff.full)[, "Estimate"], main = NULL, xlab = "Residuals")
 text(-6, 95, "2A", cex = 2)
 
-qqnorm(residuals(ageDiff.full), main = NULL)
-qqline(residuals(ageDiff.full))
+qqnorm(residuals(ageDiff.full)[, "Estimate"], main = NULL)
+qqline(residuals(ageDiff.full)[, "Estimate"])
 text(-2.5, 9, "2B", cex = 2)
 
-plot(residuals(ageDiff.full) ~ fitted.values(ageDiff.full), xlab = "Fitted values", ylab = "Residuals")
+plot(residuals(ageDiff.full)[, "Estimate"] ~ fitted.values(ageDiff.full)[, "Estimate"], 
+     xlab = "Fitted values", ylab = "Residuals")
 text(-11.5, 9, "2C", cex = 2)
 
 dev.off()
@@ -2081,29 +2112,61 @@ par(mfrow = c(1, 1))
 ### iii) Factors predicting recipient sex
 
 # Find the optimal random effects structure in a null model where 'recipient sex' is the outcome
-recSex.ml.null <- glmer(recSex ~ (1|id) + (1|camp), family = "binomial", data = recip)
-#ranova(recSex.ml.null)
 
-# Have to use 'anova' here, as 'ranova' only works for linear multi-level models - Inclusion of camp RE does improve model fit, beyond that of just ego ID.
-recSex.ml.null2 <- glmer(recSex ~ (1|id), family = "binomial", data = recip)
-anova(recSex.ml.null, recSex.ml.null2)
+# Full model (with all random effects terms) - Lots of convergence warnings and some higher r-hat values (1,02)
+recSex.ml <- brm(recSex ~ 1 + (1 | id) + (1 | alter_id) + (1 | camp), data = recip, family = "bernoulli",
+                      warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 579202)
+summary(recSex.ml)
 
-summary(ageDiff.ml.null)
+recSex.ml <- add_criterion(recSex.ml, "loo")
+
+# Dropping alter ID - Much better than full model, but still some issues
+recSex.ml_noAlter <- brm(recSex ~ 1 + (1 | id) + (1 | camp), data = recip, family = "bernoulli",
+                              warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 546312)
+summary(recSex.ml_noAlter)
+
+recSex.ml_noAlter <- add_criterion(recSex.ml_noAlter, "loo")
+
+# Dropping camp - Pretty much same as full model, as lots of warnings/issues
+recSex.ml_noCamp <- brm(recSex ~ 1 + (1 | id) + (1 | alter_id), data = recip, family = "bernoulli",
+                             warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 13079)
+summary(recSex.ml_noCamp)
+
+recSex.ml_noCamp <- add_criterion(recSex.ml_noCamp, "loo")
+
+# Dropping camp and alter ID - Still a couple of issues, but generally much better
+recSex.ml_noAlterCamp <- brm(recSex ~ 1 + (1 | id), data = recip, family = "bernoulli",
+                                  warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 572006)
+summary(recSex.ml_noAlterCamp)
+
+recSex.ml_noAlterCamp <- add_criterion(recSex.ml_noAlterCamp, "loo")
+
+# No random effects
+recSex.noml <- brm(recSex ~ 1, data = recip, family = "bernoulli",
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 473144)
+summary(recSex.noml)
+
+recSex.noml <- add_criterion(recSex.noml, "loo")
+
+
+## Comparing models - Best fit is apparently the most complex model, but the loo values are no way near each other suggesting they're not comparable at all...  Comparing the two models which fitted well, model fit is pretty much the same (meaning no/little benefit to inclusion of camp RE)
+loo(recSex.ml)
+loo(recSex.ml_noAlter)
+loo(recSex.ml_noCamp)
+loo(recSex.ml_noAlterCamp)
+loo(recSex.noml)
 
 
 ## Now look at whether age, sex and relatedness are associated with sex of recipient. Only association is with ego sex, as participants much more likely to choose children of the same sex
-sexRec.full <- glmer(recSex ~ egoAge + egoSex + rel + (1|id) + (1|camp), family = "binomial", data = recip)
+sexRec.full <- brm(recSex ~ egoAge + egoSex + rel + (1 | id), data = recip, family = "bernoulli",
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 925748)
 summary(sexRec.full)
-
-exp(coef(summary(sexRec.full)))
-exp(confint(sexRec.full, method = "Wald"))
 
 ## Make a table to save these results to
 TableS8 <- data.frame(cbind(variable = c("Intercept", "Age", "Sex", "Relatedness"),
-                            coef = exp(coef(summary(sexRec.full))[,1]),
-                            lci = exp(confint(sexRec.full, method = "Wald")[3:6,1]),
-                            uci = exp(confint(sexRec.full, method = "Wald")[3:6,2]),
-                            p = coef(summary(sexRec.full))[,4]
+                            coef = exp(fixef(sexRec.full)[,1]),
+                            lci = exp(fixef(sexRec.full)[,3]),
+                            uci = exp(fixef(sexRec.full)[,4])
 ))
 TableS8
 
@@ -2114,74 +2177,117 @@ TableS8 <- TableS8 %>%
   mutate(lci = as.numeric(lci)) %>%
   mutate(lci = round(lci, 3)) %>%
   mutate(uci = as.numeric(uci)) %>%
-  mutate(uci = round(uci, 3)) %>%
-  mutate(p = as.numeric(p)) %>%
-  mutate(p = round(p, 3))
+  mutate(uci = round(uci, 3))
 
 TableS8
 
 write_csv(TableS8, "../Results/tableS8.csv", quote = FALSE)
+
 
 # Predicted probabilities, to help interpret odds ratios
 newdata <- data.frame(cbind(egoAge = rep(mean(recip$egoAge), 2),
                             rel = rep(mean(recip$rel), 2),
                             egoSex = c(0, 1)))
 newdata
-newdata$probs <- predict(sexRec.full, newdata = newdata, type = "response", re.form = NA)
+newdata$probs <- fitted(sexRec.full, newdata = newdata, type = "response", re_formula = NA)[, "Estimate"]
 newdata
 
 
 ## Interaction models
 
 # Age by sex: No interaction
-sexRec.agebysex <- lmer(recSex ~ egoAge * egoSex + rel + (1|id) + (1|camp), REML = FALSE, data = recip)
+sexRec.agebysex <- brm(recSex ~ egoAge * egoSex + rel + (1|id), data = recip, family = "bernoulli",
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 727401)
 summary(sexRec.agebysex)
 
+exp(fixef(sexRec.agebysex))
+
 # Age by relatedness: Is an association, with odds of nominating males increasing with age if r = 0, but decreasing with age if r = 0.5.
-sexRec.agebyrel <- lmer(recSex ~ egoAge * rel + egoSex + (1|id) + (1|camp), REML = FALSE, data = recip)
+sexRec.agebyrel <- brm(recSex ~ egoAge * rel + egoSex + (1|id), data = recip, family = "bernoulli",
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 611302)
 summary(sexRec.agebyrel)
 
-exp(coef(summary(sexRec.agebyrel)))
-exp(confint(sexRec.agebyrel))
+exp(fixef(sexRec.agebyrel))
 
 newdata <- data.frame(cbind(egoAge = rep(c(5, 10, 15), 4),
                             rel = c(0, 0, 0, 0.5, 0.5, 0.5, 0, 0, 0, 0.5, 0.5, 0.5),
                             egoSex = rep(c(0, 1), each = 6)))
 newdata
-newdata$probs <- predict(sexRec.agebyrel, newdata = newdata, type = "response", re.form = NA)
+newdata$probs <- fitted(sexRec.agebyrel, newdata = newdata, type = "response", re_formula = NA)[, "Estimate"]
 newdata
 
 # sex by relatedness: No interaction
-sexRec.sexbyrel <- lmer(recSex ~ egoAge + egoSex * rel + (1|id) + (1|camp), REML = FALSE, data = recip)
+sexRec.sexbyrel <- brm(recSex ~ egoAge + egoSex * rel + (1|id), data = recip, family = "bernoulli",
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 120120)
 summary(sexRec.sexbyrel)
+
+exp(fixef(sexRec.sexbyrel))
 
 
 
 ### iv) Factors predicting nominating someone of the same sex
 
-# Find the optimal random effects structure in a null model where 'sex difference' is the outcome - Get a convergence warning, most likely because 'camp' explains so little variation so cannot be estimated accurately. Will just use ego ID as a random effect, then.
-sexDiff.ml.null <- glmer(sexDiff ~ (1|id) + (1|camp), family = "binomial", data = recip)
-#ranova(recSex.ml.null)
+# Find the optimal random effects structure in a null model where 'sex difference' is the outcome
 
-summary(sexDiff.ml.null)
+# Full model (with all random effects terms) - Some convergence warnings, but not too bad fit
+sexDiff.ml <- brm(sexDiff ~ 1 + (1 | id) + (1 | alter_id) + (1 | camp), data = recip, family = "bernoulli",
+                       warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 643170)
+summary(sexDiff.ml)
 
-sexDiff.ml.null <- glmer(sexDiff ~ (1|id), family = "binomial", data = recip)
-summary(sexDiff.ml.null)
+sexDiff.ml <- add_criterion(sexDiff.ml, "loo")
+
+# Dropping alter ID - Better than full model, and no real issues
+sexDiff.ml_noAlter <- brm(sexDiff ~ 1 + (1 | id) + (1 | camp), data = recip, family = "bernoulli",
+                               warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 37367)
+summary(sexDiff.ml_noAlter)
+
+sexDiff.ml_noAlter <- add_criterion(sexDiff.ml_noAlter, "loo")
+
+# Dropping camp - Similar to full model, but slightly fewer warnings
+sexDiff.ml_noCamp <- brm(sexDiff ~ 1 + (1 | id) + (1 | alter_id), data = recip, family = "bernoulli",
+                              warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 705101)
+summary(sexDiff.ml_noCamp)
+
+sexDiff.ml_noCamp <- add_criterion(sexDiff.ml_noCamp, "loo")
+
+# Dropping camp and alter ID - Still a couple of issues, but generally much better
+sexDiff.ml_noAlterCamp <- brm(sexDiff ~ 1 + (1 | id), data = recip, family = "bernoulli",
+                                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 425972)
+summary(sexDiff.ml_noAlterCamp)
+
+sexDiff.ml_noAlterCamp <- add_criterion(sexDiff.ml_noAlterCamp, "loo")
+
+# No random effects
+sexDiff.noml <- brm(sexDiff ~ 1, data = recip, family = "bernoulli",
+                   warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 398494)
+summary(sexDiff.noml)
+
+sexDiff.noml <- add_criterion(sexDiff.noml, "loo")
+
+
+## Comparing models - Best fit is apparently the model with ego and recipient REs, although hard to know whether these are comparable, given issues above... Comparing the two models which fitted best, model fit is pretty much the same (meaning no/little benefit to inclusion of camp RE)
+loo(sexDiff.ml)
+loo(sexDiff.ml_noAlter)
+loo(sexDiff.ml_noCamp)
+loo(sexDiff.ml_noAlterCamp)
+loo(sexDiff.noml)
 
 
 ## Now look at whether age, sex and relatedness are associated with being of same sex. No associations here.
-sexDiff.full <- glmer(sexDiff ~ egoAge + egoSex + rel + (1|id), family = "binomial", data = recip)
+sexDiff.full <- brm(sexDiff ~ egoAge + egoSex + rel + (1|id), family = "bernoulli", data = recip,
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 720932)
 summary(sexDiff.full)
 
-exp(coef(summary(sexDiff.full)))
-exp(confint(sexDiff.full, method = "Wald"))
+# Check that inclusion of alter ID random effect not alter results - Get qualitatively similar results
+sexDiff.full_alter <- brm(sexDiff ~ egoAge + egoSex + rel + (1|id) + (1|alter_id), family = "bernoulli", data = recip,
+                    warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 93800)
+summary(sexDiff.full_alter)
 
 ## Make a table to save these results to
 TableS9 <- data.frame(cbind(variable = c("Intercept", "Age", "Sex", "Relatedness"),
-                            coef = exp(coef(summary(sexDiff.full))[,1]),
-                            lci = exp(confint(sexDiff.full, method = "Wald")[2:5,1]),
-                            uci = exp(confint(sexDiff.full, method = "Wald")[2:5,2]),
-                            p = coef(summary(sexDiff.full))[,4]
+                            coef = exp(fixef(sexDiff.full)[,1]),
+                            lci = exp(fixef(sexDiff.full)[,3]),
+                            uci = exp(fixef(sexDiff.full)[,4])
 ))
 TableS9
 
@@ -2192,9 +2298,7 @@ TableS9 <- TableS9 %>%
   mutate(lci = as.numeric(lci)) %>%
   mutate(lci = round(lci, 3)) %>%
   mutate(uci = as.numeric(uci)) %>%
-  mutate(uci = round(uci, 3)) %>%
-  mutate(p = as.numeric(p)) %>%
-  mutate(p = round(p, 3))
+  mutate(uci = round(uci, 3))
 
 TableS9
 
@@ -2204,16 +2308,23 @@ write_csv(TableS9, "../Results/tableS9.csv", quote = FALSE)
 ## Interaction models
 
 # Age by sex: No interaction
-sexDiff.agebysex <- lmer(sexDiff ~ egoAge * egoSex + rel + (1|id), REML = FALSE, data = recip)
+sexDiff.agebysex <- brm(sexDiff ~ egoAge * egoSex + rel + (1|id), data = recip, family = "bernoulli",
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 988233)
 summary(sexDiff.agebysex)
 
+exp(fixef(sexDiff.agebysex))
+
 # Age by relatedness: No interaction
-sexDiff.agebyrel <- lmer(sexDiff ~ egoAge * rel + egoSex + (1|id), REML = FALSE, data = recip)
+sexDiff.agebyrel <- brm(sexDiff ~ egoAge * rel + egoSex + (1|id), data = recip, family = "bernoulli",
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 952432)
 summary(sexDiff.agebyrel)
 
+exp(fixef(sexDiff.agebyrel))
+
 # sex by relatedness: No interaction
-sexDiff.sexbyrel <- lmer(sexDiff ~ egoAge + egoSex * rel + (1|id), REML = FALSE, data = recip)
+sexDiff.sexbyrel <- brm(sexDiff ~ egoAge + egoSex * rel + (1|id), data = recip, family = "bernoulli",
+                        warmup = 1000, iter = 3000, chains = 4, init = "random", seed = 949846)
 summary(sexDiff.sexbyrel)
 
-
+exp(fixef(sexDiff.sexbyrel))
 
