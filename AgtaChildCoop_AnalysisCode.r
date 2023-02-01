@@ -31,7 +31,7 @@ library(ggmcmc)
 
 
 # Set working directory
-setwd("...")
+#setwd("...")
 setwd("C:\\Users\\ds16565\\OneDrive - University of Bristol\\MyFiles-Migrated\\Documents\\KidCoopPaper\\Analysis\\CurrentScriptAndData")
 
 
@@ -1441,7 +1441,7 @@ recip <- read_csv("AgtaChildCoop_ChildRecipients.csv")
 head(recip)
 summary(recip)
 
-# Convert ID variables to factors (although I won't use 'alter_id' as a random effect below, as can cause major convergence issues and nonsense results)
+# Convert ID variables to factors (although I won't use 'alter_id' as a random effect much below, as can cause major convergence issues and nonsense results)
 recip$id <- factor(recip$id)
 recip$camp <- factor(recip$camp)
 recip$alter_id <- factor(recip$alter_id)
@@ -1801,6 +1801,12 @@ newdata_noml
 
 ### i) Factors predicting age of recipient
 
+## Descriptive stats
+summary(recip$recAge)
+sd(recip$recAge)
+hist(recip$recAge)
+
+
 # Find the optimal random effects structure in a null model where 'recipient age' is the outcome
 
 # Full model (with all random effects terms) - Lots of convergence warnings and high r-hat values (around 3 to 4)
@@ -1964,6 +1970,12 @@ plot(residuals(recAge.full)[, "Estimate"] ~ fitted.values(recAge.full)[, "Estima
 
 ### ii) Factors predicting age difference between ego and alter
 
+## Descriptive stats
+summary(recip$ageDiff)
+sd(recip$ageDiff)
+hist(recip$ageDiff)
+
+
 # Find the optimal random effects structure in a null model where 'age difference' is the outcome
 
 # Full model (with all random effects terms) - Lots of convergence warnings and high r-hat values (around 3 to 4)
@@ -2111,6 +2123,11 @@ par(mfrow = c(1, 1))
 
 ### iii) Factors predicting recipient sex
 
+## Descriptive stats
+table(recip$recSex)
+(table(recip$recSex) / sum(table(recip$recSex))) * 100
+
+
 # Find the optimal random effects structure in a null model where 'recipient sex' is the outcome
 
 # Full model (with all random effects terms) - Lots of convergence warnings and some higher r-hat values (1,02)
@@ -2226,6 +2243,11 @@ exp(fixef(sexRec.sexbyrel))
 
 
 ### iv) Factors predicting nominating someone of the same sex
+
+## Descriptive stats
+table(recip$sexDiff)
+(table(recip$sexDiff) / sum(table(recip$sexDiff))) * 100
+
 
 # Find the optimal random effects structure in a null model where 'sex difference' is the outcome
 
